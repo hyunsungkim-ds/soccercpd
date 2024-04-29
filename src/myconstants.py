@@ -67,8 +67,6 @@ HEADER_UGP = [
     LABEL_SPEED,
 ]
 
-LABEL_START_TIME = "start_time"
-LABEL_ALIGNED_ROLE = "aligned_role"
 HEADER_ROLES = [
     "player_code",
     "session",
@@ -85,12 +83,6 @@ HEADER_ROLES = [
     "switch_rate",
 ]
 
-LABEL_COORDS = "coords"
-LABEL_EDGE_MAT = "edge_mat"
-LABEL_PERM = "perm"
-LABEL_BASE_PERM = "base_perm"
-LABEL_CLUSTER = "cluster"
-LABEL_FORMATION = "formation"
 HEADER_FORM_PERIODS = [
     "activity_id",
     "form_period",
@@ -98,8 +90,8 @@ HEADER_FORM_PERIODS = [
     "start_dt",
     "end_dt",
     "duration",
-    LABEL_COORDS,
-    LABEL_EDGE_MAT,
+    "coords",
+    "edge_mat",
 ]
 HEADER_ROLE_PERIODS = [
     "activity_id",
@@ -109,13 +101,13 @@ HEADER_ROLE_PERIODS = [
     "start_dt",
     "end_dt",
     "duration",
-    LABEL_BASE_PERM,
+    "base_perm",
 ]
 HEADER_ROLE_ALIGNS = [
     "activity_id",
     "form_period",
     "base_role",
-    LABEL_ALIGNED_ROLE,
+    "aligned_role",
     "x",
     "y",
 ]
