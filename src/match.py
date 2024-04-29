@@ -1,118 +1,79 @@
-from datetime import datetime
+import os
+from datetime import datetime, timedelta
+from typing import Tuple
 
+import matplotlib.image as mpimg
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import rpy2.robjects.packages as rpackages
+from matplotlib import animation
+from tqdm import tqdm
 
-from .myconstants import *
-
-pd.options.mode.chained_assignment = None
+from src.soccercpd import SoccerCPD
 
 
-# For match data preprocessing
 class Match:
-    def __init__(self, activity_record, player_periods, roster, ugp, pitch_size=(10800, 7200), outliers=None):
-        self.record = activity_record
-        self.player_periods = player_periods
-        self.ugp = ugp
-        self.roster = self._upgrade_roster(roster, outliers)
-        self.pitch_size = pitch_size
+    def __init__(self, home_id: int, away_id: int = 0) -> None:
+        self.activity_ids = {"H": home_id, "A": away_id}
+        self.roster = pd.read_csv(f"private_data/roster/{home_id}-{away_id}.csv", header=0).set_index("player_code")
+        self.traces = pd.read_csv(f"private_data/traces/{home_id}-{away_id}.csv", header=0, parse_dates=["datetime"])
 
-    # Synchronize the player movement data with the official roster
-    def _upgrade_roster(self, roster, outliers=None):
-        if outliers is not None:
-            self.ugp = self.ugp[~self.ugp[LABEL_PLAYER_ID].isin(outliers)]
-            for period in self.player_periods.index:
-                player_ids = self.player_periods.at[period, LABEL_PLAYER_IDS]
-                self.player_periods.at[period, LABEL_PLAYER_IDS] = list(set(player_ids) - set(outliers))
+        self.team_traces = dict()
+        self.phase_records = dict()
+        self.team_cpd = dict()
 
-        player_ids = []
-        for player_id in roster.index:
-            if not self.ugp[self.ugp[LABEL_PLAYER_ID] == player_id].empty:
-                player_ids.append(player_id)
-            if player_id not in self.player_periods.at[0, LABEL_PLAYER_IDS]:
-                # Change 'player_name' to 0 for the player not in the official roster,
-                # so that it can be filtered to be manually checked
-                roster.at[player_id, LABEL_PLAYER_NAME] = 0
-        roster = roster.loc[player_ids]
+    # optionally rotate the pitch so that each team always attack from left to right
+    def rotate_pitch(self, pitch_size: Tuple = (104, 68)):
+        for s in self.traces["session"].unique():
+            s_traces = self.traces[self.traces["session"] == s]
 
-        if len(self.player_periods) > 1:
-            for period in self.player_periods.index[1:]:
-                roster[period] = 0
-                for player_id in roster.index:
-                    if player_id in self.player_periods.at[period, LABEL_PLAYER_IDS]:
-                        roster.at[player_id, period] = 1
-            return roster.sort_values(by=[1, LABEL_SQUAD_NUM], ascending=[False, True]).reset_index()
-        else:
-            return roster.sort_values(LABEL_SQUAD_NUM).reset_index()
+            home_xy_cols = [f"{p}_{x}" for p in self.roster.index for x in ["x", "y"] if p[0] == "H"]
+            away_xy_cols = [f"{p}_{x}" for p in self.roster.index for x in ["x", "y"] if p[0] == "A"]
+            home_mean_x = s_traces[home_xy_cols[0::2]].mean().mean()
+            away_mean_x = s_traces[away_xy_cols[0::2]].mean().mean()
 
-    # Compute relative elapsed time in a session from unixtime
-    @staticmethod
-    def _compute_gametime(current_ut, start_ut):
-        seconds_total = current_ut - start_ut
-        minutes = int(seconds_total / SCALAR_TIME)
-        seconds_rest = seconds_total % SCALAR_TIME
-        return "{0:02d}:{1:04.1f}".format(minutes, seconds_rest)
-
-    # Filter in-play data from the measured data using the start, end, and substitution records
-    def construct_inplay_ugp(self):
-        freq = f"{self.ugp[LABEL_DURATION].iloc[1].round(1)}S"
-        ugp_inplay = []
-
-        for i in self.roster.index:
-            # If a player in the official roster didn't actually played,
-            # then exclude his/her entire data from the analysis
-            if self.roster.at[i, LABEL_PLAYER_NAME] != 0 and self.roster.iloc[i, len(HEADER_ROSTER) :].sum() == 0:
-                continue
-
-            player_id = self.roster.at[i, LABEL_PLAYER_ID]
-            try:
-                player_ugp = self.ugp[self.ugp[LABEL_PLAYER_ID] == player_id]
-            except IndexError:
-                continue
+            if home_mean_x < away_mean_x:
+                self.traces.loc[s_traces.index, away_xy_cols[0::2]] = pitch_size[0] - s_traces[away_xy_cols[0::2]]
+                self.traces.loc[s_traces.index, away_xy_cols[1::2]] = pitch_size[1] - s_traces[away_xy_cols[1::2]]
             else:
-                player_ugp_inplay = []
-                session_start_ut = 0
-                for j in self.player_periods.index[1:]:
-                    player_period = self.player_periods.loc[j]
-                    start_dt = player_period[LABEL_START_DT]
-                    end_dt = player_period[LABEL_END_DT]
-                    dt_idx = pd.DataFrame(index=pd.date_range(start_dt, end_dt, freq=freq))[1:]
-                    period_ugp = pd.merge(player_ugp, dt_idx, how="right", left_index=True, right_index=True)
-                    period_ugp[LABEL_PLAYER_PERIOD] = j
-                    period_ugp[LABEL_SESSION] = player_period[LABEL_SESSION]
+                self.traces.loc[s_traces.index, home_xy_cols[0::2]] = pitch_size[0] - s_traces[home_xy_cols[0::2]]
+                self.traces.loc[s_traces.index, home_xy_cols[1::2]] = pitch_size[1] - s_traces[home_xy_cols[1::2]]
 
-                    if player_period[LABEL_TYPE].startswith("START"):
-                        session_start_ut = (start_dt - datetime(1970, 1, 1)).total_seconds()
-                    period_ugp[LABEL_UNIXTIME] = period_ugp.index.view(np.int64) // SCALAR_MICRO / SCALAR_MILLI
-                    period_ugp[LABEL_GAMETIME] = period_ugp[LABEL_UNIXTIME].apply(
-                        lambda x: self._compute_gametime(x, session_start_ut)
-                    )
-                    period_ugp[LABEL_DURATION] = float(freq[:-1])
+    def construct_team_traces(self):
+        for team in ["H", "A"]:
+            team_players = [c[:3] for c in self.traces.columns if c[0] == team and c.endswith("_x")]
+            phase_col = "home_phase" if team == "H" else "away_phase"
 
-                    # Remove the player's period data if he/she didn't actually play in that period,
-                    # except for the players not in the official roster (to manually check the validity)
-                    if (
-                        player_id in self.player_periods.at[0, LABEL_PLAYER_IDS]
-                        and player_id not in self.player_periods.at[j, LABEL_PLAYER_IDS]
-                    ):
-                        period_ugp[HEADER_UGP[5:]] = np.nan
-                    player_ugp_inplay.append(period_ugp[HEADER_UGP])
+            for phase in self.traces[phase_col].unique():
+                team_xy_cols = [f"{p}_{x}" for p in team_players for x in ["x", "y"]]
+                phase_x = self.traces.loc[self.traces[phase_col] == phase, team_xy_cols[::2]].dropna(axis=1)
 
-                player_ugp_inplay = pd.concat(player_ugp_inplay)
-                player_ugp_inplay[LABEL_PLAYER_ID] = int(player_id)
-                ugp_inplay.append(player_ugp_inplay)
+                if len(phase_x.columns) > 10:  # if the goalkeeper was measured
+                    gk = phase_x.mean().idxmin()[:3]
+                    team_players.remove(gk)
 
-        self.ugp = pd.concat(ugp_inplay)
+                time_cols = ["datetime", "session", "time", phase_col]
+                self.team_traces[team] = self.traces[time_cols + team_xy_cols].rename(columns={phase_col: "phase"})
 
-    # Rotate the pitch for one of the sessions so that the team always attacks from left to right
-    def rotate_pitch(self):
-        xlim = self.pitch_size[0]
-        ylim = self.pitch_size[1]
-        rotated = 2 - self.record[LABEL_ROTATED_SESSION]
-        for session in self.player_periods[LABEL_SESSION].unique()[1:]:
-            # If rotated == 0, rotate the even-numbered sessions (sessions with session % 2 == 0)
-            # If rotated == 1, rotate the odd-numbered sessions (sessions with session % 2 == 1)
-            if session % 2 == rotated:
-                session_idx = self.ugp[LABEL_SESSION] == session
-                self.ugp.loc[session_idx, LABEL_X] = xlim - self.ugp[LABEL_X].loc[session_idx]
-                self.ugp.loc[session_idx, LABEL_Y] = ylim - self.ugp[LABEL_Y].loc[session_idx]
+                grouped = self.team_traces[team].groupby("phase")
+                sessions = grouped["session"].first()
+                start_dts = (grouped["datetime"].first() - timedelta(seconds=0.1)).rename("start_dt")
+                end_dts = grouped["datetime"].last().rename("end_dt")
+                self.phase_records[team] = pd.concat([sessions, start_dts, end_dts], axis=1)
+
+    def run_soccercpd(self, team="H"):
+        # install and import the R package 'gSeg' to be used in SoccerCPD
+        utils = rpackages.importr("utils")
+        utils.chooseCRANmirror(ind=1)
+        if not rpackages.isinstalled("gSeg"):
+            utils.install_packages("gSeg")
+        rpackages.importr("gSeg")
+
+        # run SoccerCPD
+        team_roster = self.roster[self.roster.index.str.startswith(team)]
+        cpd = SoccerCPD(self.activity_ids[team], team_roster, self.team_traces[team])
+        cpd.run()
+
+        self.team_cpd[team] = cpd
+        return cpd

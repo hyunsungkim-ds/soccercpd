@@ -20,7 +20,7 @@ pd.set_option("display.max_rows", 100)
 pd.set_option("display.max_columns", 20)
 
 
-# Formation and role change-point detection (main algorithm)
+# formation and role change-point detection (main algorithm)
 class SoccerCPD:
     def __init__(
         self,
@@ -77,7 +77,7 @@ class SoccerCPD:
         end_dts = grouped["datetime"].last().rename("end_dt")
         return pd.concat([sessions, start_dts, end_dts], axis=1)
 
-    # Apply Delaunay triangulation to the given player coordinates to obtain the role-adjacency matrix
+    # apply Delaunay triangulation to the given player coordinates to obtain the role-adjacency matrix
     @staticmethod
     def delaunay_edge_mat(coords):
         tri_pts = Delaunay(coords).simplices
@@ -101,7 +101,7 @@ class SoccerCPD:
     def manhattan(mat1, mat2):
         return np.abs(mat1 - mat2).sum()
 
-    # Recursive change-point detection for the input sequence
+    # recursive change-point detection for the input sequence
     def detect_change_times(self, input_seq, sub_dts, mode="form"):
         # if mode == "form" (FormCPD), the input is a sequence of role-adjacency matrices
         # if mode == "role" (RoleCPD), the input a sequence of role permutations
@@ -113,7 +113,7 @@ class SoccerCPD:
             metric = SoccerCPD.manhattan if mode == "form" else SoccerCPD.hamming
             dists = pd.DataFrame(pairwise_distances(input_seq.drop_duplicates(), metric=metric))
 
-            # Save the input sequence and the pairwise distances so that we can use them in the R script below
+            # save the input sequence and the pairwise distances so that we can use them in the R script below
             if not os.path.exists(DIR_TEMP_DATA):
                 os.mkdir(DIR_TEMP_DATA)
             input_seq.to_csv(f"{DIR_TEMP_DATA}/{self.activity_id}_temp_seq.csv", index=False)
@@ -127,7 +127,7 @@ class SoccerCPD:
                 else:
                     gseg_type = self.rolecpd_type.split("_")[1][0]
 
-                # Run the R function "gseg1_discrete" to find a change-point
+                # run the R function "gseg1_discrete" to find a change-point
                 # rpackages.importr("gSeg", lib_loc=rpackages.importr("base")._libPaths()[0])
                 robjects.r(
                     f"""
@@ -149,8 +149,8 @@ class SoccerCPD:
             except rembedded.RRuntimeError:
                 return []
 
-            # Check whether the detected change-point is significant, using the following three conditions
-            # Condition (1): The p-value of the scan statistic must be less than 0.1
+            # check whether the detected change-point is significant, using the following three conditions
+            # condition (1): The p-value of the scan statistic must be less than 0.1
             if robjects.r["pval"][0] >= self.max_pval:
                 print("Change-point insignificant: The p-value is not small enough.\n")
                 return []
@@ -173,13 +173,13 @@ class SoccerCPD:
 
         chg_dt = input_seq.index[chg_idx]
 
-        # Fine-tune chg_dt to the closest substitution time (if exists)
+        # fine-tune chg_dt to the closest substitution time (if exists)
         if len(sub_dts) > 0:
             tds = np.abs(sub_dts - chg_dt.to_pydatetime())
             if tds.min().total_seconds() <= 180:
                 chg_dt = sub_dts[tds.argmin()]
 
-        # Condition (2): Both of the segments must last for at least five minutes
+        # condition (2): Both of the segments must last for at least five minutes
         seq1 = input_seq[:chg_dt]
         seq2 = input_seq[chg_dt:]
         if (len(seq1) < self.min_pdur) or (len(seq2) < self.min_pdur):
@@ -187,7 +187,7 @@ class SoccerCPD:
             return []
 
         if mode == "form":
-            # Condition (3) for FormCPD: The respective mean role-adjacency matrices
+            # condition (3) for FormCPD: The respective mean role-adjacency matrices
             # from the segments before and after chg_dt are far enough from each other
             form1_edge_mat = seq1.mean(axis=0).values
             form2_edge_mat = seq2.mean(axis=0).values
@@ -195,14 +195,14 @@ class SoccerCPD:
                 print("Change-point insignificant: The formation is not changed.\n")
                 return []
             else:
-                # If significant, recursively detect another change-points before and after chg_dt
+                # if significant, recursively detect another change-points before and after chg_dt
                 print(f"A significant fine-tuned change-point at {chg_dt.time()}.\n")
                 prev_chg_dts = self.detect_change_times(seq1, sub_dts)
                 next_chg_dts = self.detect_change_times(seq2, sub_dts)
                 return prev_chg_dts + [chg_dt] + next_chg_dts
 
         elif mode == "role":
-            # Condition (3) for RoleCPD: The most frequent permutations differ between before and after chg_dt
+            # condition (3) for RoleCPD: The most frequent permutations differ between before and after chg_dt
             seq1_str = seq1.apply(lambda row: np.array2string(row.values), axis=1)
             seq2_str = seq2.apply(lambda row: np.array2string(row.values), axis=1)
             counter1 = Counter(seq1_str)
@@ -211,7 +211,7 @@ class SoccerCPD:
                 print("Change-point insignificant: The most frequent permutation is not changed.\n")
                 return []
             else:
-                # If significant, recursively detect another change-points before and after chg_dt
+                # if significant, recursively detect another change-points before and after chg_dt
                 print(f"A significant fine-tuned change-point at {chg_dt.time()}.")
                 print(f"- Frequent permutations before {chg_dt.time()}:")
                 pprint(counter1.most_common(5))
@@ -225,7 +225,7 @@ class SoccerCPD:
         else:
             raise ValueError("Invalid mode")
 
-    # Align corresponding roles from different formation periods
+    # align corresponding roles from different formation periods
     @staticmethod
     def align_formations(role_df, form_period_records):
         base_form_period_record = form_period_records.iloc[0]
@@ -260,7 +260,7 @@ class SoccerCPD:
         role_row["base_role"] = base_perm[role_row["base_role"]]
         return role_row
 
-    # Recompute the "switch rate" of a frame by the Hamming distance
+    # recompute the "switch rate" of a frame by the Hamming distance
     # between the temporary roles and the instructed roles
     @staticmethod
     def recompute_switch_rate(moment_role_df):
@@ -268,7 +268,7 @@ class SoccerCPD:
         moment_role_df["switch_rate"] = hamming / len(moment_role_df)
         return moment_role_df
 
-    # Refind base roles per player period and recompute switch rate per frame for the precomputed role details
+    # refind base roles per player period and recompute switch rate per frame for the precomputed role details
     def reset_precomputed_role_df(self):
         for i in self.phase_records.index[1:]:
             phase_role_df = self.role_df[self.role_df["phase"] == i]
@@ -301,7 +301,7 @@ class SoccerCPD:
         form_periods = []
         role_periods = []
 
-        # If self.use_precomputed == True, load and initialize the precomputed role details
+        # if self.use_precomputed == True, load and initialize the precomputed role details
         if use_precomputed and os.path.exists(role_path):
             self.role_df = pd.read_csv(role_path, header=0, encoding="utf-8-sig")
             self.role_df["datetime"] = self.role_df["datetime"].apply(
@@ -309,7 +309,7 @@ class SoccerCPD:
             )
             self.reset_precomputed_role_df()
 
-        # Initialize formation and role period labels by the session labels
+        # initialize formation and role period labels by the session labels
         self.traces["form_period"] = self.traces["session"]
         self.traces["role_period"] = self.traces["session"]
 
@@ -325,7 +325,7 @@ class SoccerCPD:
 
             grouper = session_traces.dropna(subset="x").groupby("time", group_keys=False)
             if grouper["player_code"].apply(len).max() < 10:
-                # If less than 10 players have been measured during the session, skip the process
+                # if less than 10 players have been measured during the session, skip the process
                 print("Not enough players to estimate a formation.")
                 continue
             else:
@@ -341,10 +341,10 @@ class SoccerCPD:
                 rolerep = RoleRep(session_traces)
                 session_role_df = rolerep.run(freq=freq)
 
-            # Exclude situations such as set-pieces that are irrelevant to the team formation
+            # exclude situations such as set-pieces that are irrelevant to the team formation
             valid_role_df = session_role_df[session_role_df["switch_rate"] <= self.max_sr]
 
-            # Check whether all the 10 outfield players are measured for some periods
+            # check whether all the 10 outfield players are measured for some periods
             role_x = valid_role_df.pivot_table("x_norm", "datetime", "role", aggfunc="first")
             role_y = valid_role_df.pivot_table("y_norm", "datetime", "role", aggfunc="first")
             role_coords = np.dstack([role_x.dropna().values, role_y.dropna().values])
@@ -354,7 +354,7 @@ class SoccerCPD:
             else:
                 role_list.append(session_role_df)
 
-            # Generate the sequence of role-adjacency matrices
+            # generate the sequence of role-adjacency matrices
             edge_mats = []
             for coords in role_coords:
                 edge_mats.append(SoccerCPD.delaunay_edge_mat(coords).reshape(-1))
@@ -376,12 +376,12 @@ class SoccerCPD:
 
             else:
                 print("\n* Step 2: Compute the formation graph of the session")
-                # Assume there are no formation change throughout the session
+                # assume there are no formation change throughout the session
                 form_chg_dts = [session_start_dt, session_end_dt]
 
                 print("\n* Step 3: Find the most frequent role permutation per 5-minute segment")
 
-            # Generate the sequence of role permutations
+            # generate the sequence of role permutations
             perms = valid_role_df.pivot_table("base_role", "datetime", "role", aggfunc="first")
             role_set = set(perms.dropna().iloc[0])
             perms = perms.apply(SoccerCPD.complete_perm, axis=1, args=(role_set,)).astype(int)
@@ -398,7 +398,7 @@ class SoccerCPD:
                 mean_coords = np.stack([mean_x, mean_y]).T
                 mean_edge_mat = edge_mats[form_start_dt:form_end_dt].mean(axis=0).round(3).values
 
-                # Recording the details of the formation period
+                # recording the details of the formation period
                 form_periods.append(
                     {
                         "activity_id": self.activity_id,
@@ -413,7 +413,7 @@ class SoccerCPD:
                 )
 
                 if self.apply_cpd:
-                    # Recursive change-point detection for the permutation sequence
+                    # recursive change-point detection for the permutation sequence
                     print(f"\nRoleCPD for the formation period {form_period}:")
                     input_perms = perms[form_start_dt:form_end_dt]
                     input_sub_dts = np.array([dt for dt in sub_dts if (dt >= form_start_dt) and (dt < form_end_dt)])
@@ -459,8 +459,7 @@ class SoccerCPD:
             return
 
         if not self.apply_cpd:
-            # Finding the most frequent role permutation per 5-minute segment
-
+            # finding the most frequent role permutation per 5-minute segment
             perms_str = pd.concat(perm_list)
             bins = self.phase_records["start_dt"].tolist()[1:] + [self.phase_records["end_dt"].iloc[0]]
             perms_str["phase"] = pd.cut(perms_str.index, bins, labels=self.phase_records.index[1:])
@@ -500,14 +499,14 @@ class SoccerCPD:
         self.form_periods = pd.DataFrame(form_periods).set_index("form_period")
         self.role_periods = pd.DataFrame(role_periods).set_index("role_period")
 
-        # Label formation and role periods to the timestamps in role_df
+        # label formation and role periods to the timestamps in role_df
         match_end_dt = self.phase_records["end_dt"].iloc[-1]
         form_bins = self.form_periods["start_dt"].tolist() + [match_end_dt]
         role_bins = self.role_periods["start_dt"].tolist() + [match_end_dt]
         self.role_df["form_period"] = pd.cut(self.role_df["datetime"], bins=form_bins, labels=self.form_periods.index)
         self.role_df["role_period"] = pd.cut(self.role_df["datetime"], bins=role_bins, labels=self.role_periods.index)
 
-        # Reflect the instructed roles and recompute switch rates in role_df
+        # reflect the instructed roles and recompute switch rates in role_df
         self.role_df = self.role_df.apply(self.reassign_base_role, axis=1)
         self.role_df = self.role_df.groupby("datetime", group_keys=False).apply(SoccerCPD.recompute_switch_rate)
         self.role_df, self.form_periods = SoccerCPD.align_formations(self.role_df, self.form_periods)
@@ -661,7 +660,7 @@ class SoccerCPD:
         if not os.path.exists(f"{self.target_dir}"):
             os.mkdir(f"{self.target_dir}")
 
-        # Save form_periods
+        # save form_periods
         if form_summary:
             form_summary_dir = f"{self.target_dir}/form_summary"
             if not os.path.exists(form_summary_dir):
@@ -679,7 +678,7 @@ class SoccerCPD:
             self.role_summary.to_csv(role_summary_path, index=False, encoding="utf-8-sig")
             print(f"'{role_summary_path}' saving done.")
 
-        # Save role_df
+        # save role_df
         if role_details:
             role_details_dir = f"{self.target_dir}/role_details"
             if not os.path.exists(role_details_dir):
