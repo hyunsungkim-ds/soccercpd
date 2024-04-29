@@ -24,37 +24,58 @@ pd.set_option("display.max_columns", 20)
 class SoccerCPD:
     def __init__(
         self,
-        match,
+        activity_id: int,
+        team_roster: pd.DataFrame,
+        team_traces: pd.DataFrame,
         apply_cpd=True,
-        formcpd_type="gseg_avg",
-        rolecpd_type="gseg_avg",
+        formcpd_type="gseg_avg",  # ["gseg_avg", "gseg_union", "kernel_linear", "kernel_rbf", "kernel_cosine", "rank"]
+        rolecpd_type="gseg_avg",  # ["gseg_avg", "gseg_union"]
         max_sr=MAX_SWITCH_RATE,
         max_pval=MAX_PVAL,
         min_pdur=MIN_PERIOD_DUR,
         min_fdist=MIN_FORM_DIST,
     ):
+        self.activity_id = activity_id
+        self.roster = team_roster
+        self.traces = SoccerCPD.reshape_traces(team_traces)
+        self.phase_records = SoccerCPD.construct_phase_records(team_traces)
+
         self.apply_cpd = apply_cpd
         self.formcpd_type = formcpd_type
         self.rolecpd_type = rolecpd_type
-        # Available FormCPD types: 'gseg_avg', 'gseg_union', 'kernel_linear', 'kernel_rbf', 'kernel_cosine', 'rank'
-        # Available RoleCPD types: 'gseg_avg', 'gseg_union'
 
         self.max_sr = max_sr
         self.max_pval = max_pval
         self.min_pdur = min_pdur
         self.min_fdist = min_fdist
 
-        self.match = match
-        self.activity_id = self.match.record[LABEL_ACTIVITY_ID]
-        self.player_periods = self.match.player_periods
-        self.ugp = self.match.ugp
-
-        self.fgp = pd.DataFrame(columns=[LABEL_DATETIME] + HEADER_FGP)
+        self.role_df = pd.DataFrame(columns=["datetime"] + HEADER_ROLES)
         self.form_periods = pd.DataFrame(columns=HEADER_FORM_PERIODS)
         self.role_periods = pd.DataFrame(columns=HEADER_ROLE_PERIODS)
-        self.role_records = None
+        self.role_summary = None
 
         self.target_dir = f"{DIR_DATA}/{formcpd_type}" if apply_cpd else f"{DIR_DATA}/noncpd"
+
+    @staticmethod
+    def reshape_traces(team_traces: pd.DataFrame):
+        trace_list = []
+        players = [c[:3] for c in team_traces.columns if c[3:] == "_x"]
+
+        for p in players:
+            cols = ["datetime", "session", "time", "phase", f"{p}_x", f"{p}_y"]
+            player_trace = team_traces[cols].copy().rename(columns={f"{p}_x": "x", f"{p}_y": "y"})
+            player_trace["player_code"] = p
+            trace_list.append(player_trace)
+
+        return pd.concat(trace_list).set_index("datetime")
+
+    @staticmethod
+    def construct_phase_records(team_traces: pd.DataFrame):
+        grouped = team_traces.groupby("phase")
+        sessions = grouped["session"].first()
+        start_dts = (grouped["datetime"].first() - timedelta(seconds=0.1)).rename("start_dt")
+        end_dts = grouped["datetime"].last().rename("end_dt")
+        return pd.concat([sessions, start_dts, end_dts], axis=1)
 
     # Apply Delaunay triangulation to the given player coordinates to obtain the role-adjacency matrix
     @staticmethod
@@ -82,8 +103,8 @@ class SoccerCPD:
 
     # Recursive change-point detection for the input sequence
     def detect_change_times(self, input_seq, sub_dts, mode="form"):
-        # if mode == 'form' (FormCPD), the input is a sequence of role-adjacency matrices
-        # if mode == 'role' (RoleCPD), the input a sequence of role permutations
+        # if mode == "form" (FormCPD), the input is a sequence of role-adjacency matrices
+        # if mode == "role" (RoleCPD), the input a sequence of role permutations
 
         start_time = input_seq.index[0].time()
         end_time = input_seq.index[-1].time()
@@ -106,8 +127,8 @@ class SoccerCPD:
                 else:
                     gseg_type = self.rolecpd_type.split("_")[1][0]
 
-                # Run the R function 'gseg1_discrete' to find a change-point
-                # rpackages.importr('gSeg', lib_loc=rpackages.importr('base')._libPaths()[0])
+                # Run the R function "gseg1_discrete" to find a change-point
+                # rpackages.importr("gSeg", lib_loc=rpackages.importr("base")._libPaths()[0])
                 robjects.r(
                     f"""
                     dir = '{DIR_TEMP_DATA}'
@@ -206,25 +227,25 @@ class SoccerCPD:
 
     # Align corresponding roles from different formation periods
     @staticmethod
-    def align_formations(fgp, form_period_records):
+    def align_formations(role_df, form_period_records):
         base_form_period_record = form_period_records.iloc[0]
 
         for form_period in form_period_records.index[1:]:
             cur_form_period_record = form_period_records.loc[form_period]
             cost_mat = distance_matrix(
-                base_form_period_record[LABEL_COORDS],
-                cur_form_period_record[LABEL_COORDS],
+                base_form_period_record["coords"],
+                cur_form_period_record["coords"],
             )
             _, perm = linear_sum_assignment(cost_mat)
-            form_period_records.at[form_period, LABEL_COORDS] = cur_form_period_record[LABEL_COORDS][perm]
-            form_period_records.at[form_period, LABEL_EDGE_MAT] = cur_form_period_record[LABEL_EDGE_MAT][perm][:, perm]
+            form_period_records.at[form_period, "coords"] = cur_form_period_record["coords"][perm]
+            form_period_records.at[form_period, "edge_mat"] = cur_form_period_record["edge_mat"][perm][:, perm]
 
             inverse_perm = dict(zip(np.array(perm) + 1, np.arange(10) + 1))
-            cur_fgp = fgp[fgp[LABEL_FORM_PERIOD] == form_period]
-            for col in [LABEL_ROLE, LABEL_BASE_ROLE]:
-                fgp.loc[cur_fgp.index, col] = cur_fgp[col].apply(lambda role: inverse_perm[role])
+            fp_role_df = role_df[role_df["form_period"] == form_period]
+            for col in ["role", "base_role"]:
+                role_df.loc[fp_role_df.index, col] = fp_role_df[col].apply(lambda role: inverse_perm[role])
 
-        return fgp, form_period_records
+        return role_df, form_period_records
 
     @staticmethod
     def most_common(player_roles):
@@ -234,24 +255,24 @@ class SoccerCPD:
         except IndexError:
             return np.nan
 
-    def reassign_base_role(self, fgp_row):
-        base_perm = self.role_periods.at[fgp_row[LABEL_ROLE_PERIOD], LABEL_BASE_PERM]
-        fgp_row[LABEL_BASE_ROLE] = base_perm[fgp_row[LABEL_BASE_ROLE]]
-        return fgp_row
+    def reassign_base_role(self, role_row):
+        base_perm = self.role_periods.at[role_row["role_period"], "base_perm"]
+        role_row["base_role"] = base_perm[role_row["base_role"]]
+        return role_row
 
-    # Recompute the 'switch rate' of a frame by the Hamming distance
+    # Recompute the "switch rate" of a frame by the Hamming distance
     # between the temporary roles and the instructed roles
     @staticmethod
-    def recompute_switch_rate(moment_fgp):
-        hamming = SoccerCPD.hamming(moment_fgp[LABEL_ROLE], moment_fgp[LABEL_BASE_ROLE])
-        moment_fgp[LABEL_SWITCH_RATE] = hamming / len(moment_fgp)
-        return moment_fgp
+    def recompute_switch_rate(moment_role_df):
+        hamming = SoccerCPD.hamming(moment_role_df["role"], moment_role_df["base_role"])
+        moment_role_df["switch_rate"] = hamming / len(moment_role_df)
+        return moment_role_df
 
-    # Refind base roles per player period and recompute switch rate per frame for the precomputed FGP data
-    def reset_precomputed_fgp(self):
-        for i in self.player_periods.index[1:]:
-            fgp = self.fgp[self.fgp[LABEL_PLAYER_PERIOD] == i]
-            perms = fgp.pivot_table(LABEL_ROLE, LABEL_DATETIME, LABEL_PLAYER_ID, "first")
+    # Refind base roles per player period and recompute switch rate per frame for the precomputed role details
+    def reset_precomputed_role_df(self):
+        for i in self.phase_records.index[1:]:
+            phase_role_df = self.role_df[self.role_df["phase"] == i]
+            perms = phase_role_df.pivot_table("role", "datetime", "player_code", "first")
             if perms.empty:
                 continue
             # role_set = set(perms.dropna().iloc[0])
@@ -260,77 +281,78 @@ class SoccerCPD:
             perms_str = perms.apply(lambda perm: np.array2string(perm.values), axis=1)
             base_perm_list = np.fromstring(SoccerCPD.most_common(perms_str)[1:-1], dtype="float32", sep=" ")
             base_perm_dict = dict(zip(perms.columns, base_perm_list))
-            self.fgp.loc[fgp.index, LABEL_BASE_ROLE] = fgp[LABEL_PLAYER_ID].apply(lambda x: base_perm_dict[x])
-        self.fgp = self.fgp.groupby(LABEL_DATETIME, group_keys=False).apply(SoccerCPD.recompute_switch_rate)
+            self.role_df.loc[phase_role_df.index, "base_role"] = phase_role_df["player_code"].map(base_perm_dict)
+        self.role_df = self.role_df.groupby("datetime", group_keys=False).apply(SoccerCPD.recompute_switch_rate)
 
-    def generate_role_records(self):
-        grouped = self.fgp.groupby([LABEL_PLAYER_ID, LABEL_ROLE_PERIOD], group_keys=False, as_index=False)
-        role_records = grouped[[LABEL_PLAYER_PERIOD, LABEL_BASE_ROLE]].first()
-        role_records = pd.merge(role_records, self.role_periods[HEADER_ROLE_PERIODS[:-1]])
+    def construct_role_summary(self):
+        grouped = self.role_df.groupby(["player_code", "role_period"], group_keys=False, as_index=False)
+        role_summary = grouped[["phase", "base_role"]].first()
+        role_summary = pd.merge(role_summary, self.role_periods[HEADER_ROLE_PERIODS[:-1]])
 
-        role_records = pd.merge(role_records, self.form_periods[[LABEL_FORM_PERIOD, LABEL_COORDS]])
-        role_records[LABEL_X] = role_records.apply(lambda x: x[LABEL_COORDS][x[LABEL_BASE_ROLE] - 1, 0], axis=1)
-        role_records[LABEL_Y] = role_records.apply(lambda x: x[LABEL_COORDS][x[LABEL_BASE_ROLE] - 1, 1], axis=1)
+        role_summary = pd.merge(role_summary, self.form_periods[["form_period", "coords"]])
+        role_summary["x"] = role_summary.apply(lambda x: x["coords"][x["base_role"] - 1, 0], axis=1)
+        role_summary["y"] = role_summary.apply(lambda x: x["coords"][x["base_role"] - 1, 1], axis=1)
 
-        role_records = pd.merge(role_records, self.match.roster[HEADER_ROSTER])
-        return role_records[HEADER_ROLE_RECORDS].astype({LABEL_PLAYER_PERIOD: int})
+        role_summary = pd.merge(role_summary, self.roster[["squad_num", "player_name"]].reset_index())
+        return role_summary[HEADER_ROLE_SUMMARY].astype({"phase": int})
 
-    def run(self, use_precomputed_fgp=True, freq="1S"):
-        fgp_path = f"data/{self.formcpd_type}/fgp/{self.activity_id}.csv"
+    def run(self, use_precomputed=True, freq="1S"):
+        role_path = f"data/{self.formcpd_type}/role_details/{self.activity_id}.csv"
         form_periods = []
         role_periods = []
 
-        # If self.use_precomputed_fgp == True, load and initialize the precomputed FGP data
-        if use_precomputed_fgp and os.path.exists(fgp_path):
-            self.fgp = pd.read_csv(fgp_path, header=0, encoding="utf-8-sig")
-            self.fgp[LABEL_DATETIME] = self.fgp[LABEL_DATETIME].apply(
+        # If self.use_precomputed == True, load and initialize the precomputed role details
+        if use_precomputed and os.path.exists(role_path):
+            self.role_df = pd.read_csv(role_path, header=0, encoding="utf-8-sig")
+            self.role_df["datetime"] = self.role_df["datetime"].apply(
                 lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S")
             )
-            self.reset_precomputed_fgp()
+            self.reset_precomputed_role_df()
 
         # Initialize formation and role period labels by the session labels
-        self.ugp[LABEL_FORM_PERIOD] = self.ugp[LABEL_SESSION]
-        self.ugp[LABEL_ROLE_PERIOD] = self.ugp[LABEL_SESSION]
+        self.traces["form_period"] = self.traces["session"]
+        self.traces["role_period"] = self.traces["session"]
 
-        fgp_list = []
+        role_list = []
         perm_list = []
 
-        for session in self.ugp[LABEL_SESSION].unique():
+        for session in self.traces["session"].unique():
             print(f"\n{'-' * 33} Session {session} {'-' * 34}")
-            player_periods = self.player_periods[self.player_periods[LABEL_SESSION] == session]
-            session_start_dt = pd.to_datetime(player_periods[LABEL_START_DT].iloc[0])
-            session_end_dt = pd.to_datetime(player_periods[LABEL_END_DT].iloc[-1])
-            session_ugp = self.ugp[self.ugp[LABEL_SESSION] == session]
+            player_periods = self.phase_records[self.phase_records["session"] == session]
+            session_start_dt = pd.to_datetime(player_periods["start_dt"].iloc[0])
+            session_end_dt = pd.to_datetime(player_periods["end_dt"].iloc[-1])
+            session_traces = self.traces[self.traces["session"] == session]
 
-            grouper = session_ugp.dropna(subset="x").groupby("gametime", group_keys=False)
-            if grouper["player_id"].apply(len).max() < 10:
+            grouper = session_traces.dropna(subset="x").groupby("time", group_keys=False)
+            if grouper["player_code"].apply(len).max() < 10:
                 # If less than 10 players have been measured during the session, skip the process
                 print("Not enough players to estimate a formation.")
                 continue
             else:
-                print(player_periods[HEADER_PLAYER_PERIODS[2:7]])
+                # print(player_periods[HEADER_PLAYER_PERIODS[2:7]])
+                print(player_periods)
 
-            if use_precomputed_fgp and not self.fgp.empty:
+            if use_precomputed and not self.role_df.empty:
                 print("\n* Step 1: Load the pre-computed role assignment result")
-                fgp = self.fgp[self.fgp[LABEL_SESSION] == session]
-                print(f"Session FGP data loaded and filtered from '{fgp_path}'.")
+                session_role_df = self.role_df[self.role_df["session"] == session]
+                print(f"Session role details loaded and filtered from '{role_path}'.")
             else:
                 print("\n* Step 1: Frame-by-frame role assignment using RoleRep")
-                rolerep = RoleRep(session_ugp)
-                fgp = rolerep.run(freq=freq)
+                rolerep = RoleRep(session_traces)
+                session_role_df = rolerep.run(freq=freq)
 
             # Exclude situations such as set-pieces that are irrelevant to the team formation
-            valid_fgp = fgp[fgp[LABEL_SWITCH_RATE] <= self.max_sr]
+            valid_role_df = session_role_df[session_role_df["switch_rate"] <= self.max_sr]
 
             # Check whether all the 10 outfield players are measured for some periods
-            role_x = valid_fgp.pivot_table(LABEL_X_NORM, LABEL_DATETIME, LABEL_ROLE, aggfunc="first")
-            role_y = valid_fgp.pivot_table(LABEL_Y_NORM, LABEL_DATETIME, LABEL_ROLE, aggfunc="first")
+            role_x = valid_role_df.pivot_table("x_norm", "datetime", "role", aggfunc="first")
+            role_y = valid_role_df.pivot_table("y_norm", "datetime", "role", aggfunc="first")
             role_coords = np.dstack([role_x.dropna().values, role_y.dropna().values])
             if role_coords.shape[1] < 10:
                 print("Not enough players to estimate a formation.")
                 continue
             else:
-                fgp_list.append(fgp)
+                role_list.append(session_role_df)
 
             # Generate the sequence of role-adjacency matrices
             edge_mats = []
@@ -340,10 +362,7 @@ class SoccerCPD:
 
             if self.apply_cpd:
                 print("\n* Step 2: FormCPD based on role-adjacency matrices")
-                # Recursive change-point detection for the matrix sequence
-                sub_dts = pd.to_datetime(
-                    player_periods.loc[player_periods[LABEL_TYPE].isin(["SUB", "RED"]), LABEL_START_DT].values
-                )
+                sub_dts = pd.to_datetime(player_periods["start_dt"].values[1:])
                 form_chg_dts = self.detect_change_times(edge_mats, sub_dts, mode="form")
 
                 print("Detected formation change-points (rounded off to the nearest 10 second mark):")
@@ -363,11 +382,11 @@ class SoccerCPD:
                 print("\n* Step 3: Find the most frequent role permutation per 5-minute segment")
 
             # Generate the sequence of role permutations
-            perms = valid_fgp.pivot_table(LABEL_BASE_ROLE, LABEL_DATETIME, LABEL_ROLE, aggfunc="first")
+            perms = valid_role_df.pivot_table("base_role", "datetime", "role", aggfunc="first")
             role_set = set(perms.dropna().iloc[0])
             perms = perms.apply(SoccerCPD.complete_perm, axis=1, args=(role_set,)).astype(int)
             perms_str = perms.apply(lambda perm: np.array2string(perm.values), axis=1)
-            perm_list.append(perms_str.rename(LABEL_PERM).to_frame())
+            perm_list.append(perms_str.rename("perm").to_frame())
 
             for form_chg_idx in range(1, len(form_chg_dts)):
                 form_period = len(form_periods) + 1
@@ -382,14 +401,14 @@ class SoccerCPD:
                 # Recording the details of the formation period
                 form_periods.append(
                     {
-                        LABEL_ACTIVITY_ID: self.activity_id,
-                        LABEL_SESSION: session,
-                        LABEL_FORM_PERIOD: form_period,
-                        LABEL_START_DT: form_start_dt,
-                        LABEL_END_DT: form_end_dt,
-                        LABEL_DURATION: (form_end_dt - form_start_dt).total_seconds(),
-                        LABEL_COORDS: mean_coords,
-                        LABEL_EDGE_MAT: mean_edge_mat.reshape(10, 10),
+                        "activity_id": self.activity_id,
+                        "session": session,
+                        "form_period": form_period,
+                        "start_dt": form_start_dt,
+                        "end_dt": form_end_dt,
+                        "duration": (form_end_dt - form_start_dt).total_seconds(),
+                        "coords": mean_coords,
+                        "edge_mat": mean_edge_mat.reshape(10, 10),
                     }
                 )
 
@@ -423,19 +442,19 @@ class SoccerCPD:
                         # Recording the details of the role period
                         role_periods.append(
                             {
-                                LABEL_ACTIVITY_ID: self.activity_id,
-                                LABEL_SESSION: session,
-                                LABEL_FORM_PERIOD: form_period,
-                                LABEL_ROLE_PERIOD: role_period,
-                                LABEL_START_DT: role_start_dt,
-                                LABEL_END_DT: role_end_dt,
-                                LABEL_DURATION: (role_end_dt - role_start_dt).total_seconds(),
-                                LABEL_BASE_PERM: base_perm_dict,
+                                "activity_id": self.activity_id,
+                                "session": session,
+                                "form_period": form_period,
+                                "role_period": role_period,
+                                "start_dt": role_start_dt,
+                                "end_dt": role_end_dt,
+                                "duration": (role_end_dt - role_start_dt).total_seconds(),
+                                "base_perm": base_perm_dict,
                             },
                         )
 
-        if fgp_list:
-            self.fgp = pd.concat(fgp_list, ignore_index=True)
+        if role_list:
+            self.role_df = pd.concat(role_list, ignore_index=True)
         else:
             return
 
@@ -443,62 +462,61 @@ class SoccerCPD:
             # Finding the most frequent role permutation per 5-minute segment
 
             perms_str = pd.concat(perm_list)
-            bins = self.player_periods[LABEL_START_DT].tolist()[1:] + [self.player_periods[LABEL_END_DT].iloc[0]]
-            perms_str[LABEL_PLAYER_PERIOD] = pd.cut(perms_str.index, bins, labels=self.player_periods.index[1:])
+            bins = self.phase_records["start_dt"].tolist()[1:] + [self.phase_records["end_dt"].iloc[0]]
+            perms_str["phase"] = pd.cut(perms_str.index, bins, labels=self.phase_records.index[1:])
 
             base_perm_list = []
-            for i in self.player_periods.index[1:]:
-                period_perms_str = perms_str[perms_str[LABEL_PLAYER_PERIOD] == i]
+            for i in self.phase_records.index[1:]:
+                period_perms_str = perms_str[perms_str["phase"] == i]
                 if period_perms_str.empty:
                     continue
 
-                session = self.player_periods.at[i, LABEL_SESSION]
-                period_perms_str[LABEL_SESSION] = session
-                period_perms_str[LABEL_FORM_PERIOD] = session
+                session = self.phase_records.at[i, "session"]
+                period_perms_str["session"] = session
+                period_perms_str["form_period"] = session
 
-                period_start_dt = self.player_periods.at[i, LABEL_START_DT]
+                period_start_dt = self.phase_records.at[i, "start_dt"]
                 offset = f"{period_start_dt.minute * SCALAR_TIME + period_start_dt.second}S"
                 resampler = period_perms_str.resample("5T", closed="right", offset=offset)
 
                 base_perms = resampler.apply(SoccerCPD.most_common).reset_index()
-                base_perms[LABEL_END_DT] = base_perms[LABEL_DATETIME].shift(-1)
-                base_perms.iat[-1, -1] = self.player_periods.at[i, LABEL_END_DT]
+                base_perms["end_dt"] = base_perms["datetime"].shift(-1)
+                base_perms.iat[-1, -1] = self.phase_records.at[i, "end_dt"]
                 base_perm_list.append(base_perms)
 
             role_periods = pd.concat(base_perm_list, ignore_index=True)
-            role_periods.rename(columns={LABEL_DATETIME: LABEL_START_DT}, inplace=True)
+            role_periods.rename(columns={"datetime": "start_dt"}, inplace=True)
 
-            perms_list = role_periods[LABEL_PERM].apply(lambda x: np.fromstring(x[1:-1], dtype=int, sep=" "))
-            role_periods[LABEL_BASE_PERM] = perms_list.apply(lambda perm: dict(zip(np.arange(10) + 1, perm)))
+            perms_list = role_periods["perm"].apply(lambda x: np.fromstring(x[1:-1], dtype=int, sep=" "))
+            role_periods["base_perm"] = perms_list.apply(lambda perm: dict(zip(np.arange(10) + 1, perm)))
 
-            role_periods[LABEL_ACTIVITY_ID] = self.activity_id
-            role_periods[LABEL_ROLE_PERIOD] = role_periods.index + 1
-            role_periods[LABEL_DURATION] = (role_periods[LABEL_END_DT] - role_periods[LABEL_START_DT]).apply(
+            role_periods["activity_id"] = self.activity_id
+            role_periods["role_period"] = role_periods.index + 1
+            role_periods["duration"] = (role_periods["end_dt"] - role_periods["start_dt"]).apply(
                 lambda td: td.total_seconds()
             )
             self.role_periods = role_periods[HEADER_ROLE_PERIODS]
 
-        self.form_periods = pd.DataFrame(form_periods).set_index(LABEL_FORM_PERIOD)
-        self.role_periods = pd.DataFrame(role_periods).set_index(LABEL_ROLE_PERIOD)
+        self.form_periods = pd.DataFrame(form_periods).set_index("form_period")
+        self.role_periods = pd.DataFrame(role_periods).set_index("role_period")
 
-        # Label formation and role periods to the timestamps in fgp
-        match_end_dt = self.player_periods[LABEL_END_DT].iloc[-1]
-        form_bins = self.form_periods[LABEL_START_DT].tolist() + [match_end_dt]
-        role_bins = self.role_periods[LABEL_START_DT].tolist() + [match_end_dt]
-        self.fgp[LABEL_FORM_PERIOD] = pd.cut(self.fgp[LABEL_DATETIME], bins=form_bins, labels=self.form_periods.index)
-        self.fgp[LABEL_ROLE_PERIOD] = pd.cut(self.fgp[LABEL_DATETIME], bins=role_bins, labels=self.role_periods.index)
+        # Label formation and role periods to the timestamps in role_df
+        match_end_dt = self.phase_records["end_dt"].iloc[-1]
+        form_bins = self.form_periods["start_dt"].tolist() + [match_end_dt]
+        role_bins = self.role_periods["start_dt"].tolist() + [match_end_dt]
+        self.role_df["form_period"] = pd.cut(self.role_df["datetime"], bins=form_bins, labels=self.form_periods.index)
+        self.role_df["role_period"] = pd.cut(self.role_df["datetime"], bins=role_bins, labels=self.role_periods.index)
 
-        # Reflect the instructed roles and recompute switch rates in fgp
-        self.fgp = self.fgp.apply(self.reassign_base_role, axis=1)
-        self.fgp = self.fgp.groupby(LABEL_DATETIME, group_keys=False).apply(SoccerCPD.recompute_switch_rate)
-        self.fgp, self.form_periods = SoccerCPD.align_formations(self.fgp, self.form_periods)
-        self.fgp = pd.merge(self.fgp, self.match.roster[HEADER_ROSTER]).sort_values(
-            by=[LABEL_PLAYER_ID, LABEL_DATETIME], ignore_index=True
-        )
+        # Reflect the instructed roles and recompute switch rates in role_df
+        self.role_df = self.role_df.apply(self.reassign_base_role, axis=1)
+        self.role_df = self.role_df.groupby("datetime", group_keys=False).apply(SoccerCPD.recompute_switch_rate)
+        self.role_df, self.form_periods = SoccerCPD.align_formations(self.role_df, self.form_periods)
+        self.role_df = pd.merge(self.role_df, self.roster[["squad_num", "player_name"]].reset_index())
+        self.role_df.sort_values(by=["player_code", "datetime"], ignore_index=True, inplace=True)
 
         self.form_periods = self.form_periods.reset_index()[HEADER_FORM_PERIODS]
         self.role_periods = self.role_periods.reset_index()[HEADER_ROLE_PERIODS]
-        self.role_records = self.generate_role_records()
+        self.role_summary = self.construct_role_summary()
         print()
         print("-" * 78)
         print("Formation Periods:")
@@ -508,7 +526,13 @@ class SoccerCPD:
         print(self.role_periods[HEADER_ROLE_PERIODS[1:-1]])
         print()
 
-    def visualize(self):
+    @staticmethod
+    def seconds_to_time_str(x: float):
+        minutes = int(x // 60)
+        seconds = int(x % 60)
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def visualize(self, role_labels=None):
         import math
 
         import matplotlib.gridspec as gridspec
@@ -521,27 +545,27 @@ class SoccerCPD:
         fig = plt.figure(figsize=(19.2, 10.8), dpi=100)
         gs = gridspec.GridSpec(2, 4, left=0.05, right=0.95, wspace=0.3, hspace=0.1)
 
-        xlim = 3500
-        ylim = 4000
+        xlim = 25
+        ylim = 30
 
-        for idx, form_period in enumerate(self.form_periods[LABEL_FORM_PERIOD][:4]):
-            fgp = self.fgp[(self.fgp[LABEL_FORM_PERIOD] == form_period) & (self.fgp[LABEL_ROLE].notna())]
-            role_coords = np.dot(self.form_periods.at[idx, LABEL_COORDS], [[0, 1], [-1, 0]])
-            edge_mat = self.form_periods.at[idx, LABEL_EDGE_MAT]
+        for idx, form_period in enumerate(self.form_periods["form_period"][:4]):
+            fp_role_df = self.role_df[(self.role_df["form_period"] == form_period) & (self.role_df["role"].notna())]
+            role_coords = np.dot(self.form_periods.at[idx, "coords"], [[0, 1], [-1, 0]])
+            edge_mat = self.form_periods.at[idx, "edge_mat"]
 
             plt.subplot(gs[0, idx])
-            role_period_records = self.role_periods[self.role_periods[LABEL_FORM_PERIOD] == form_period]
-            role_period_from = role_period_records[LABEL_ROLE_PERIOD].iloc[0]
+            role_period_records = self.role_periods[self.role_periods["form_period"] == form_period]
+            role_period_from = role_period_records["role_period"].iloc[0]
             if len(role_period_records) == 1:
                 plt.title(f"Role Period {role_period_from}", fontsize=20)
             else:
-                role_period_to = role_period_records[LABEL_ROLE_PERIOD].iloc[-1]
+                role_period_to = role_period_records["role_period"].iloc[-1]
                 plt.title(f"Role Periods {role_period_from}-{role_period_to}", fontsize=20)
 
             plt.scatter(
-                -fgp[LABEL_Y_NORM],
-                fgp[LABEL_X_NORM],
-                c=fgp[LABEL_ROLE],
+                -fp_role_df["y_norm"],
+                fp_role_df["x_norm"],
+                c=fp_role_df["role"],
                 vmin=0.5,
                 vmax=10.5,
                 cmap="tab10",
@@ -551,19 +575,20 @@ class SoccerCPD:
             plt.scatter(
                 role_coords[:, 0],
                 role_coords[:, 1],
-                s=500,
+                s=1200,
                 c="w",
                 edgecolors="k",
                 zorder=2,
             )
 
             for r in np.arange(10):
+                role_label = role_labels[form_period][r] if role_labels is not None else r + 1
                 plt.annotate(
-                    r + 1,
+                    role_label,
                     xy=role_coords[r],
                     ha="center",
                     va="center",
-                    fontsize=20,
+                    fontsize=15,
                     zorder=3,
                 )
                 for s in np.arange(10):
@@ -583,54 +608,46 @@ class SoccerCPD:
 
         ax = fig.add_subplot(gs[1, :])
         box = ax.get_position()
-        ax.set_position([box.x0 + box.width * 0.1, box.y0, box.width * 0.85, box.height * 0.9])
+        ax.set_position([box.x0 + box.width * 0.15, box.y0 + box.height * 0.03, box.width * 0.8, box.height * 0.95])
         plt.title("Timeline of Instructed Roles", fontsize=20)
 
-        role_assigns = (
-            self.fgp.groupby(LABEL_PLAYER_ID, group_keys=True)
-            .apply(
-                lambda df: df.set_index(LABEL_DATETIME)
-                .resample("1T", closed="right", label="left")[[LABEL_SESSION, LABEL_GAMETIME, LABEL_BASE_ROLE]]
-                .first()
-            )
-            .reset_index()
-            .dropna()
-        )
-        role_assigns = pd.merge(self.match.roster, role_assigns)
-        role_assigns[LABEL_SESSION] = role_assigns[LABEL_SESSION].astype(int)
-        role_assigns[LABEL_GAMETIME] = role_assigns.apply(
-            lambda df: f"S{df[LABEL_SESSION]}-{df[LABEL_GAMETIME][:2]}T", axis=1
-        )
-        role_assigns[LABEL_PLAYER_NAME] = role_assigns.apply(
-            lambda df: "Player No.{:02d}".format(df[LABEL_SQUAD_NUM]), axis=1
-        )
-        role_assigns.sort_values(by=LABEL_SQUAD_NUM, inplace=True)
-        role_assigns_2d = role_assigns.pivot_table(
-            values=LABEL_BASE_ROLE,
-            index=LABEL_PLAYER_NAME,
-            columns=LABEL_GAMETIME,
-            aggfunc="first",
-        )
-        sns.heatmap(role_assigns_2d, vmin=0.5, vmax=10.5, cmap="tab10", cbar=False)
+        roles_reshaped = self.role_df.pivot_table("base_role", "datetime", "player_code", aggfunc="first")
+        times = self.role_df[["datetime", "session", "time"]].drop_duplicates().sort_values(["session", "time"])
+        roles_reshaped = pd.merge(times, roles_reshaped.reset_index())
+        roles_resampled = []
 
-        duration = 0
-        vline_idxs = []
-        for idx in self.role_periods.index[:-1]:
-            duration += self.role_periods.at[idx, LABEL_DURATION]
-            vline_idxs.append(math.ceil(duration / SCALAR_TIME))
-        plt.vlines(vline_idxs, ymin=0, ymax=len(role_assigns_2d), colors="k", linestyles="--")
+        for s in self.phase_records["session"].unique():
+            start_dt = self.phase_records.loc[self.phase_records["session"] == s, "start_dt"].iloc[0]
+            offset = f"{start_dt.second % 5}S"
 
-        vline_idxs.append(0)
-        plt.xticks(
-            ticks=vline_idxs,
-            labels=role_assigns_2d.columns[vline_idxs].tolist(),
-            rotation=45,
-        )
-        plt.xlabel("session-time")
-        plt.ylabel("player")
+            session_roles_reshaped = roles_reshaped[roles_reshaped["session"] == s].set_index("datetime")
+            session_roles_reshaped = session_roles_reshaped.resample("5S", offset=offset).first()
+            session_roles_reshaped.at[session_roles_reshaped.index[0], "time"] = 0
+            roles_resampled.append(session_roles_reshaped)
+
+        self.roster["display"] = self.roster.apply(lambda x: f"{x['player_name']} ({x['squad_num']})", axis=1)
+        player_dict = self.roster["display"].to_dict()
+        roles_resampled = pd.concat(roles_resampled).rename(columns=player_dict)
+        players = [c for c in roles_resampled.columns if c[-1] == ")"]
+        sns.heatmap(roles_resampled[players].T, vmin=0.5, vmax=10.5, cmap="tab10", cbar=False)
+
+        xticks = []
+        for dt in self.role_periods["start_dt"]:
+            xticks.append(roles_resampled.index.get_loc(dt))
+        xticks.append(len(roles_resampled) - 1)
+
+        session_labels = roles_resampled["session"].iloc[xticks].apply(lambda x: f"H{x}-")
+        time_labels = roles_resampled["time"].iloc[xticks].apply(SoccerCPD.seconds_to_time_str)
+        labels = (session_labels + time_labels).values
+
+        ax.vlines(xticks, ymin=0, ymax=len(players), colors="k", linestyles="--")
+        ax.set_xticks(xticks)
+        ax.set_xticklabels(labels, rotation=45)
+        ax.set_xlabel("session-time")
+        ax.set_ylabel("player")
 
         report_dir = f"{self.target_dir}/report"
-        report_path = f"{report_dir}/{self.match.record[LABEL_ACTIVITY_ID]}.png"
+        report_path = f"{report_dir}/{self.activity_id}.png"
         if not os.path.exists(f"{self.target_dir}"):
             os.mkdir(f"{self.target_dir}")
         if not os.path.exists(report_dir):
@@ -640,33 +657,33 @@ class SoccerCPD:
         plt.close(fig)
         print(f"'{report_path}' saving done.")
 
-    def save_stats(self, fgp=True, form=True, role=True):
+    def save_stats(self, form_summary=True, role_summary=True, role_details=True):
         if not os.path.exists(f"{self.target_dir}"):
             os.mkdir(f"{self.target_dir}")
 
-        # Save fgp
-        if fgp:
-            fgp_dir = f"{self.target_dir}/fgp"
-            if not os.path.exists(fgp_dir):
-                os.mkdir(fgp_dir)
-            fgp_path = f"{fgp_dir}/{self.activity_id}.csv"
-            self.fgp.to_csv(fgp_path, index=False, encoding="utf-8-sig")
-            print(f"'{fgp_path}' saving done.")
-
         # Save form_periods
-        if form:
-            form_dir = f"{self.target_dir}/form"
-            if not os.path.exists(form_dir):
-                os.mkdir(form_dir)
-            form_path = f"{form_dir}/{self.activity_id}.pkl"
-            self.form_periods.to_pickle(form_path)
-            print(f"'{form_path}' saving done.")
+        if form_summary:
+            form_summary_dir = f"{self.target_dir}/form_summary"
+            if not os.path.exists(form_summary_dir):
+                os.mkdir(form_summary_dir)
+            form_summary_path = f"{form_summary_dir}/{self.activity_id}.pkl"
+            self.form_periods.to_pickle(form_summary_path)
+            print(f"'{form_summary_path}' saving done.")
 
-        # save role_records
-        if role:
-            role_dir = f"{self.target_dir}/role"
-            if not os.path.exists(role_dir):
-                os.mkdir(role_dir)
-            role_path = f"{role_dir}/{self.activity_id}.csv"
-            self.role_records.to_csv(role_path, index=False, encoding="utf-8-sig")
-            print(f"'{role_path}' saving done.")
+        # save role_summary
+        if role_summary:
+            role_summary_dir = f"{self.target_dir}/role_summary"
+            if not os.path.exists(role_summary_dir):
+                os.mkdir(role_summary_dir)
+            role_summary_path = f"{role_summary_dir}/{self.activity_id}.csv"
+            self.role_summary.to_csv(role_summary_path, index=False, encoding="utf-8-sig")
+            print(f"'{role_summary_path}' saving done.")
+
+        # Save role_df
+        if role_details:
+            role_details_dir = f"{self.target_dir}/role_details"
+            if not os.path.exists(role_details_dir):
+                os.mkdir(role_details_dir)
+            role_details_path = f"{role_details_dir}/{self.activity_id}.csv"
+            self.role_df.to_csv(role_details_path, index=False, encoding="utf-8-sig")
+            print(f"'{role_details_path}' saving done.")
