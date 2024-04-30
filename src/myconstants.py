@@ -67,11 +67,11 @@ HEADER_UGP = [
     LABEL_SPEED,
 ]
 
-HEADER_ROLES = [
-    "player_code",
+HEADER_ROLE_DETAILS = [
+    "player_id",
     "session",
     "time",
-    "phase",
+    "player_period",
     "form_period",
     "role_period",
     "x",
@@ -113,14 +113,14 @@ HEADER_ROLE_ALIGNS = [
 ]
 HEADER_ROLE_SUMMARY = [
     "activity_id",
-    "phase",
+    "player_period",
     "form_period",
     "role_period",
     "session",
     "start_dt",
     "end_dt",
     "duration",
-    "player_code",
+    "player_id",
     "squad_num",
     "player_name",
     "base_role",

@@ -11,40 +11,38 @@ pd.set_option("display.max_rows", 100)
 pd.set_option("display.max_columns", 20)
 
 
-# Frame-by-frame role assignment proposed by Bialkowski et al. (2014)
+# frame-by-frame role assignment proposed by Bialkowski et al. (2014)
 class RoleRep:
-    def __init__(self, ugp_):
+    def __init__(self, ugp_: pd.DataFrame):
         self.ugp = ugp_
         self.fgp = None
         self.role_distns = None
 
     @staticmethod
-    def normalize_locs(moment_fgp):
+    def normalize_locs(moment_fgp: pd.DataFrame) -> pd.DataFrame:
         locs = moment_fgp[["x", "y"]]
         moment_fgp[["x_norm", "y_norm"]] = locs - locs.mean()
         return moment_fgp
 
     @staticmethod
-    def generate_fgp(ugp, freq):
+    def init_fgp(ugp: pd.DataFrame, freq="1S") -> pd.DataFrame:
         ugp = ugp[ugp["x"].notna()]
         fgp = []
-        role = 1
 
-        for player_id in ugp["player_code"].unique():
-            player_ugp = ugp[ugp["player_code"] == player_id]
+        for i, player_id in enumerate(ugp["player_id"].unique()):
+            player_ugp = ugp[ugp["player_id"] == player_id]
             resampler = player_ugp.resample(freq, closed="right", label="right")
-            player_fgp = resampler[HEADER_ROLES[:4]].last()
+            player_fgp = resampler[HEADER_ROLE_DETAILS[:4]].last()
             player_fgp["x"] = resampler["x"].mean()
             player_fgp["y"] = resampler["y"].mean()
             player_fgp["x_norm"] = np.nan
             player_fgp["y_norm"] = np.nan
             player_fgp["form_period"] = resampler["form_period"].last()
             player_fgp["role_period"] = resampler["role_period"].last()
-            player_fgp["role"] = role
-            player_fgp["base_role"] = role
+            player_fgp["role"] = i + 1
+            player_fgp["base_role"] = i + 1
             player_fgp["switch_rate"] = 0
-            fgp.append(player_fgp[HEADER_ROLES])
-            role += 1
+            fgp.append(player_fgp[HEADER_ROLE_DETAILS])
 
         fgp = pd.concat(fgp).reset_index().rename(columns={"index": "datetime"})
         return fgp.groupby("datetime", group_keys=False).apply(RoleRep.normalize_locs)
@@ -62,13 +60,13 @@ class RoleRep:
             return multivariate_normal(coords.mean(), coords.cov())
 
     @staticmethod
-    def update_params(fgp, by_phase=False):
-        cols = ["phase", "role"] if by_phase else ["role"]
+    def update_params(fgp: pd.DataFrame, by_player_period=False) -> pd.DataFrame:
+        cols = ["player_period", "role"] if by_player_period else ["role"]
         role_distns = fgp.groupby(cols).apply(RoleRep.estimate_mvn).reset_index()
         return role_distns.dropna().rename(columns={0: "distn"})
 
     @staticmethod
-    def align_formations(fgp, role_distns, label_group="session"):
+    def align_formations(fgp: pd.DataFrame, role_distns: pd.DataFrame, label_group="session"):
         groups = fgp[label_group].unique()
         base_group = groups[role_distns.groupby(label_group)["role"].count().argmax()]
         base_role_distns = role_distns[role_distns[label_group] == base_group]
@@ -94,8 +92,8 @@ class RoleRep:
 
         return fgp, role_distns.sort_values(by=[label_group, "role"]).reset_index(drop=True)
 
-    def hungarian(self, moment_fgp, role_distns):
-        cost_mat = moment_fgp[moment_fgp.columns[(len(HEADER_ROLES) + 1) :]].values
+    def hungarian(self, moment_fgp: pd.DataFrame, role_distns: pd.DataFrame) -> float:
+        cost_mat = moment_fgp[moment_fgp.columns[(len(HEADER_ROLE_DETAILS) + 1) :]].values
         row_idx, col_idx = linear_sum_assignment(cost_mat)
         base_roles = moment_fgp["base_role"].iloc[row_idx].values
         temp_roles = role_distns["role"].iloc[col_idx].values
@@ -103,12 +101,12 @@ class RoleRep:
         self.fgp.loc[moment_fgp.index, "switch_rate"] = (base_roles != temp_roles).sum() / len(row_idx)
         return cost_mat[row_idx, col_idx].mean()
 
-    def run(self, freq="1S", verbose=True):
-        temp_fgp = self.ugp.groupby("phase").apply(RoleRep.generate_fgp, freq=freq)
+    def run(self, freq="1S", verbose=True) -> pd.DataFrame:
+        temp_fgp = self.ugp.groupby("player_period").apply(RoleRep.init_fgp, freq=freq)
         temp_fgp = temp_fgp.reset_index(drop=True).dropna()
-        temp_role_distns = RoleRep.update_params(temp_fgp, by_phase=True)
-        temp_fgp = pd.merge(temp_fgp, temp_role_distns[["phase", "role"]])
-        self.fgp, _ = RoleRep.align_formations(temp_fgp, temp_role_distns, "phase")
+        temp_role_distns = RoleRep.update_params(temp_fgp, by_player_period=True)
+        temp_fgp = pd.merge(temp_fgp, temp_role_distns[["player_period", "role"]])
+        self.fgp, _ = RoleRep.align_formations(temp_fgp, temp_role_distns, "player_period")
         self.role_distns = RoleRep.update_params(self.fgp)
 
         max_iter = 10
