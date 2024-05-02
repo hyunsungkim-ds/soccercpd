@@ -2,6 +2,7 @@ import os
 from collections import Counter
 from datetime import datetime, timedelta
 from pprint import pprint
+from typing import List
 
 import numpy as np
 import pandas as pd
@@ -94,7 +95,7 @@ class SoccerCPD:
             return perm
 
     # recursive change-point detection for the input sequence
-    def detect_change_times(self, input_seq: pd.DataFrame, sub_dts: pd.Series, mode="form"):
+    def detect_change_times(self, input_seq: pd.DataFrame, sub_dts: pd.Series, mode="form") -> List[datetime]:
         # if mode == "form" (FormCPD), the input is a sequence of role-adjacency matrices
         # if mode == "role" (RoleCPD), the input a sequence of role permutations
 
@@ -252,7 +253,7 @@ class SoccerCPD:
         moment_role_df["switch_rate"] = hamming / len(moment_role_df)
         return moment_role_df
 
-    # refind base roles per player period and recompute switch rate per frame for the precomputed role details
+    # refind base roles per player period and recompute the switch rate per frame for the given role_df
     def reset_precomputed_role_df(self):
         for i in self.player_periods.index[1:]:
             pp_role_df = self.role_df[self.role_df["player_period"] == i]
@@ -290,10 +291,7 @@ class SoccerCPD:
 
         # if self.use_precomputed == True, load and initialize the precomputed role details
         if use_precomputed and os.path.exists(role_path):
-            self.role_df = pd.read_csv(role_path, header=0, encoding="utf-8-sig")
-            self.role_df["datetime"] = self.role_df["datetime"].apply(
-                lambda x: datetime.strptime(x, "%Y-%m-%d %H:%M:%S")
-            )
+            self.role_df = pd.read_csv(role_path, header=0, encoding="utf-8-sig", parse_dates=["datetime"])
             self.reset_precomputed_role_df()
 
         # initialize formation and role period labels by the session labels
@@ -520,7 +518,9 @@ class SoccerCPD:
         print(self.role_periods[HEADER_ROLE_PERIODS[1:-1]])
         print()
 
-    def label_roles(self, form_summary=pd.DataFrame, role_summary=pd.DataFrame):
+    def label_roles(self, role_summary: pd.DataFrame, form_summary: pd.DataFrame = None, form_labels: dict = None):
+        assert form_summary is not None or form_labels is not None
+
         role_template = pd.DataFrame(
             [
                 ["343", "LWB", "LCB", "CB", "RCB", "RWB", "RCM", "LCM", "LM", "CF", "RM"],
@@ -536,15 +536,18 @@ class SoccerCPD:
 
         self.role_labels = dict()
         for i, fp in enumerate(self.form_periods["form_period"]):
-            form_summary["dist_to_sample"] = 0
-            for j in form_summary.index:
-                ref_form = self.form_periods.loc[i]
-                cur_form = form_summary.loc[j]
-                form_summary.at[j, "dist_to_sample"] = compute_delaunay_dists(ref_form, cur_form)
+            if form_labels:
+                formation = form_labels[fp]
+            else:
+                form_summary["dist_to_sample"] = 0
+                for j in form_summary.index:
+                    ref_form = self.form_periods.loc[i]
+                    cur_form = form_summary.loc[j]
+                    form_summary.at[j, "dist_to_sample"] = compute_delaunay_dists(ref_form, cur_form)
+                formation = form_summary.groupby("formation")["dist_to_sample"].mean().idxmin()
 
-            formation = form_summary.groupby("formation")["dist_to_sample"].mean().idxmin()
             group_role_summary = role_summary[role_summary["formation"] == formation]
-            mean_xy = group_role_summary.groupby("aligned_role")[["x", "y"]].mean() / 100
+            mean_xy = group_role_summary.groupby("aligned_role")[["x", "y"]].mean()
 
             cost_mat = distance_matrix(mean_xy.values, self.form_periods.at[0, "coords"])
             _, perm = linear_sum_assignment(cost_mat)
