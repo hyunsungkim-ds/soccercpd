@@ -44,10 +44,10 @@ class FormManager:
 
         mean_coords["center_dist"] = np.linalg.norm(mean_coords, axis=1)
 
-        mean_coords_df = mean_coords[(mean_coords["center_dist"] >= 1200) & (mean_coords["x"] < 0)]
-        mean_coords_dm = mean_coords[(mean_coords["center_dist"] < 1200) & (mean_coords["x"] < 0)]
-        mean_coords_am = mean_coords[(mean_coords["center_dist"] < 1200) & (mean_coords["x"] >= 0)]
-        mean_coords_fw = mean_coords[(mean_coords["center_dist"] >= 1200) & (mean_coords["x"] >= 0)]
+        mean_coords_df = mean_coords[(mean_coords["center_dist"] >= 12) & (mean_coords["x"] < 0)]
+        mean_coords_dm = mean_coords[(mean_coords["center_dist"] < 12) & (mean_coords["x"] < 0)]
+        mean_coords_am = mean_coords[(mean_coords["center_dist"] < 12) & (mean_coords["x"] >= 0)]
+        mean_coords_fw = mean_coords[(mean_coords["center_dist"] >= 12) & (mean_coords["x"] >= 0)]
 
         roles_from = pd.concat(
             [
@@ -82,7 +82,14 @@ class FormManager:
     def visualize_single_graph(coords, edge_mat, labels=None):
         plt.figure(figsize=(7, 5))
         plt.scatter(
-            coords[:, 0], coords[:, 1], c=np.arange(10) + 1, s=1000, vmin=0.5, vmax=10.5, cmap="tab10", zorder=1
+            coords[:, 0],
+            coords[:, 1],
+            c=np.arange(10) + 1,
+            s=1000,
+            vmin=0.5,
+            vmax=10.5,
+            cmap="tab10",
+            zorder=1,
         )
 
         if labels is None:
@@ -105,8 +112,8 @@ class FormManager:
             for j in np.arange(10):
                 plt.plot(coords[[i, j], 0], coords[[i, j], 1], linewidth=edge_mat[i, j] ** 2 * 10, c="k", zorder=0)
 
-        xlim = 3000
-        ylim = 2400
+        xlim = 30
+        ylim = 24
         # plt.xlim(-xlim - 500, xlim + 500)
         # plt.ylim(-ylim - 500, ylim + 500)
         plt.xlim(-xlim, xlim)
@@ -132,8 +139,8 @@ class FormManager:
             for r in mean_coords.index:
                 plt.annotate(r, xy=mean_coords.loc[r], ha="center", va="center", fontsize=25, zorder=2)
 
-        xlim = 3000
-        ylim = 3000
+        xlim = 30
+        ylim = 30
         plt.xlim(-xlim, xlim)
         plt.ylim(-ylim, ylim)
         plt.vlines([-xlim, 0, xlim], ymin=-ylim, ymax=ylim, color="k", zorder=0)
