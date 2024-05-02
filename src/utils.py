@@ -4,6 +4,10 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial import Delaunay, distance_matrix
+from sympy.combinatorics import Permutation
+from sympy.interactive import init_printing
+
+init_printing(perm_cyclic=True, pretty_print=False)
 
 
 # apply Delaunay triangulation to the given player coordinates to obtain the role-adjacency matrix
@@ -41,7 +45,27 @@ def compute_delaunay_dists(form1: pd.Series, form2: pd.Series):
     return np.abs(edge_mat1 - edge_mat2).sum()
 
 
-def seconds_to_time_str(x: float):
+def seconds_to_time_str(x: float) -> str:
     minutes = int(x // 60)
     seconds = int(x % 60)
     return f"{minutes:02d}:{seconds:02d}"
+
+
+def decompose_perm_to_cycles(perm: pd.Series, labels: dict) -> list:
+    if perm["switch_rate"] > 0.6:
+        return []
+
+    perm_list = [0] + [r for (l, r) in sorted([t for t in perm[:-1] if str(t) != "nan"])]
+    if len(perm_list) < 11:
+        return []
+
+    p = Permutation(perm_list)
+    perm_str = str(p)
+
+    ret = []
+    cycles_str = perm_str.split(")")
+    for c in cycles_str[:-1]:
+        c = c.replace("(", "")
+        ret.append(c.split(" "))
+
+    return [[labels[int(r)] for r in c] for c in ret if len(c) > 1]

@@ -12,11 +12,13 @@ import ruptures as rpt
 from scipy.optimize import linear_sum_assignment
 from scipy.spatial import distance_matrix
 from sklearn.metrics import pairwise_distances
+from tqdm import tqdm
 
 from src.myconstants import *
 from src.rolerep import RoleRep
 from src.utils import (
     compute_delaunay_dists,
+    decompose_perm_to_cycles,
     delaunay_edge_mat,
     hamming_dist,
     manhattan_dist,
@@ -555,6 +557,46 @@ class SoccerCPD:
             role_labels = role_template.loc[formation]
             role_labels.index = perm + 1
             self.role_labels[fp] = role_labels.to_dict()
+
+    def detect_switches(self) -> pd.DataFrame:
+        self.role_df["roleperm"] = self.role_df.apply(lambda x: (x["base_role"], x["role"]), axis=1)
+        roleperms = self.role_df.pivot_table("roleperm", "datetime", "player_id", aggfunc="first")
+        roleperms["switch_rate"] = self.role_df.groupby("datetime")["switch_rate"].first()
+
+        start_dts = roleperms[((roleperms.notna()) & (roleperms != roleperms.shift(1))).any(axis=1)].index
+        end_dts = roleperms[((roleperms.notna()) & (roleperms != roleperms.shift(-1))).any(axis=1)].index
+
+        switches = pd.DataFrame(np.stack([start_dts, end_dts]).T, columns=["start_dt", "end_dt"])
+        switches["duration"] = (switches["end_dt"] - switches["start_dt"]).apply(lambda x: x.total_seconds() + 1)
+        switches["switch_rate"] = roleperms.loc[start_dts, "switch_rate"].values
+
+        match_times = self.role_df.set_index("datetime")[["session", "time", "form_period"]].drop_duplicates()
+        switches = pd.merge(match_times, switches, left_index=True, right_on="start_dt")
+
+        switches = switches[(switches["duration"] > 1) & (switches["switch_rate"] > 0)].reset_index(drop=True).copy()
+        switches["switch_roles"] = np.nan
+        switches["switch_players"] = np.nan
+        # switches["argmax_speed"] = 0
+        # switches["max_speed"] = 0
+
+        for i in tqdm(switches.index):
+            start_dt = switches.at[i, "start_dt"]
+            end_dt = switches.at[i, "end_dt"]
+            form_period = switches.at[i, "form_period"]
+            roleperm = roleperms.loc[start_dt]
+            switches.at[i, "switch_roles"] = decompose_perm_to_cycles(roleperm, self.role_labels[form_period])
+
+            role_players = self.role_df.set_index("datetime")[["base_role", "player_id"]].loc[start_dt]
+            role_players = role_players.set_index("base_role")["player_id"].to_dict()
+            switches.at[i, "switch_players"] = decompose_perm_to_cycles(roleperm, role_players)
+
+            # if len(switches.at[i, "switch_players"]) > 0:
+            #     switch_players = np.concatenate(switches.at[i, "switch_players"])
+            #     switch_speeds = self.traces.loc[start_dt:end_dt, [f"{p}_speed" for p in switch_players]].max()
+            #     switches.at[i, "argmax_speed"] = switch_speeds.idxmax().split("_")[0]
+            #     switches.at[i, "max_speed"] = switch_speeds.max()
+
+        return switches
 
     def visualize(self, role_labels=None):
         import matplotlib.gridspec as gridspec
