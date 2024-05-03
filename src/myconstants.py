@@ -38,7 +38,7 @@ HEADER_ACTIVITY_RECORDS = [
     LABEL_STATS_SAVED,
 ]
 
-HEADER_ROSTER = ["player_code", "squad_num", "player_name"]
+HEADER_ROSTER = ["player_id", "squad_num", "player_name"]
 HEADER_PLAYER_RECORDS = ["activity_id", LABEL_DATE, LABEL_TEAM_NAME] + HEADER_ROSTER
 
 HEADER_PLAYER_PERIODS = [

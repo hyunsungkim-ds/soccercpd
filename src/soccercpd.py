@@ -598,7 +598,7 @@ class SoccerCPD:
 
         return switches
 
-    def visualize(self, role_labels=None):
+    def visualize(self, role_labels=None, anonymize=False):
         import matplotlib.gridspec as gridspec
         import matplotlib.pyplot as plt
         import seaborn as sns
@@ -672,7 +672,11 @@ class SoccerCPD:
 
         ax = fig.add_subplot(gs[1, :])
         box = ax.get_position()
-        ax.set_position([box.x0 + box.width * 0.15, box.y0 + box.height * 0.03, box.width * 0.8, box.height * 0.95])
+        xmin = box.x0 + box.width * 0.1 if anonymize else box.x0 + box.width * 0.15
+        ymin = box.y0 + box.height * 0.03
+        xlen = box.width * 0.9 if anonymize else box.width * 0.85
+        ylen = box.height * 0.95
+        ax.set_position([xmin, ymin, xlen, ylen])
         plt.title("Timeline of Instructed Roles", fontsize=20)
 
         roles_reshaped = self.role_df.pivot_table("base_role", "datetime", "player_id", aggfunc="first")
@@ -689,10 +693,14 @@ class SoccerCPD:
             session_roles_reshaped.at[session_roles_reshaped.index[0], "time"] = 0
             roles_resampled.append(session_roles_reshaped)
 
-        self.roster["display"] = self.roster.apply(lambda x: f"{x['player_name']} ({x['squad_num']})", axis=1)
+        if anonymize:
+            self.roster["display"] = [f"Player {i + 1}" for i in np.arange(len(self.roster))]
+        else:
+            self.roster["display"] = self.roster.apply(lambda x: f"{x['player_name']} ({x['squad_num']})", axis=1)
+
         player_dict = self.roster["display"].to_dict()
         roles_resampled = pd.concat(roles_resampled).rename(columns=player_dict)
-        players = [c for c in roles_resampled.columns if c[-1] == ")"]
+        players = [c for c in roles_resampled.columns if c not in ["session", "time"]]
         sns.heatmap(roles_resampled[players].T, vmin=0.5, vmax=10.5, cmap="tab10", cbar=False)
 
         xticks = []
