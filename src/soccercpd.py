@@ -42,7 +42,7 @@ class SoccerCPD:
     ):
         self.activity_id = activity_id
         self.roster = team_roster
-        self.team_traces = team_traces
+        self.team_traces = team_traces.set_index("datetime")
         self.player_traces = reshape_traces(team_traces)
         self.player_periods = aggregate_player_periods(team_traces)
 

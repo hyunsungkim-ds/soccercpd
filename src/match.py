@@ -50,8 +50,8 @@ class Match:
             pp_col = "home_phase" if team == "H" else "away_phase"
 
             for pp in self.traces[pp_col].unique():
-                xy_cols = [f"{p}_{x}" for p in team_players for x in ["x", "y"]]
-                pp_x = self.traces.loc[self.traces[pp_col] == pp, xy_cols[::2]].dropna(axis=1)
+                xy_cols = [f"{p}_{x}" for p in team_players for x in ["x", "y", "speed"]]
+                pp_x = self.traces.loc[self.traces[pp_col] == pp, xy_cols[::3]].dropna(axis=1)
 
                 if len(pp_x.columns) > 10:  # if the goalkeeper was measured
                     gk = pp_x.mean().idxmin()[:3]

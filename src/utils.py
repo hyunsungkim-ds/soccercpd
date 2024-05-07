@@ -95,7 +95,7 @@ def complete_perm(perm: pd.Series, role_set: set) -> pd.Series:
         return perm
 
 
-def decompose_perm_to_cycles(perm: pd.Series, labels: dict) -> list:
+def decompose_perm_to_cycles(perm: pd.Series, labels: dict = None) -> list:
     if perm["switch_rate"] > 0.6:
         return []
 
@@ -112,7 +112,10 @@ def decompose_perm_to_cycles(perm: pd.Series, labels: dict) -> list:
         c = c.replace("(", "")
         ret.append(c.split(" "))
 
-    return [[labels[int(r)] for r in c] for c in ret if len(c) > 1]
+    if labels is None:
+        return [[int(r) for r in c] for c in ret if len(c) > 1]
+    else:
+        return [[labels[int(r)] for r in c] for c in ret if len(c) > 1]
 
 
 def detect_change_times(
