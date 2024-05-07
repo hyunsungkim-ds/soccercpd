@@ -9,6 +9,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial import distance_matrix
 from tqdm import tqdm
 
+from src.formviz import FormViz
 from src.myconstants import *
 from src.rolerep import RoleRep
 from src.utils import (
@@ -21,7 +22,6 @@ from src.utils import (
     detect_change_times,
     most_common,
     reshape_traces,
-    seconds_to_time_str,
 )
 
 pd.set_option("display.width", 250)
@@ -42,7 +42,8 @@ class SoccerCPD:
     ):
         self.activity_id = activity_id
         self.roster = team_roster
-        self.traces = reshape_traces(team_traces)
+        self.team_traces = team_traces
+        self.player_traces = reshape_traces(team_traces)
         self.player_periods = aggregate_player_periods(team_traces)
 
         self.apply_cpd = apply_cpd
@@ -126,18 +127,18 @@ class SoccerCPD:
             self.reset_precomputed_role_df()
 
         # initialize formation and role period labels by the session labels
-        self.traces["form_period"] = self.traces["session"]
-        self.traces["role_period"] = self.traces["session"]
+        self.player_traces["form_period"] = self.player_traces["session"]
+        self.player_traces["role_period"] = self.player_traces["session"]
 
         role_list = []
         perm_list = []
 
-        for session in self.traces["session"].unique():
+        for session in self.player_traces["session"].unique():
             print(f"\n{'-' * 33} Session {session} {'-' * 34}")
             player_periods = self.player_periods[self.player_periods["session"] == session]
             session_start_dt = pd.to_datetime(player_periods["start_dt"].iloc[0])
             session_end_dt = pd.to_datetime(player_periods["end_dt"].iloc[-1])
-            session_traces = self.traces[self.traces["session"] == session]
+            session_traces = self.player_traces[self.player_traces["session"] == session]
 
             grouper = session_traces.dropna(subset="x").groupby("time", group_keys=False)
             if grouper["player_id"].apply(len).max() < 10:
@@ -407,8 +408,8 @@ class SoccerCPD:
         switches = switches[(switches["duration"] > 1) & (switches["switch_rate"] > 0)].reset_index(drop=True).copy()
         switches["switch_roles"] = np.nan
         switches["switch_players"] = np.nan
-        # switches["argmax_speed"] = 0
-        # switches["max_speed"] = 0
+        switches["argmax_speed"] = 0
+        switches["max_speed"] = 0
 
         for i in tqdm(switches.index):
             start_dt = switches.at[i, "start_dt"]
@@ -421,11 +422,11 @@ class SoccerCPD:
             role_players = role_players.set_index("base_role")["player_id"].to_dict()
             switches.at[i, "switch_players"] = decompose_perm_to_cycles(roleperm, role_players)
 
-            # if len(switches.at[i, "switch_players"]) > 0:
-            #     switch_players = np.concatenate(switches.at[i, "switch_players"])
-            #     switch_speeds = self.traces.loc[start_dt:end_dt, [f"{p}_speed" for p in switch_players]].max()
-            #     switches.at[i, "argmax_speed"] = switch_speeds.idxmax().split("_")[0]
-            #     switches.at[i, "max_speed"] = switch_speeds.max()
+            if len(switches.at[i, "switch_players"]) > 0:
+                switch_players = np.concatenate(switches.at[i, "switch_players"])
+                switch_speeds = self.team_traces.loc[start_dt:end_dt, [f"{p}_speed" for p in switch_players]].max()
+                switches.at[i, "argmax_speed"] = switch_speeds.idxmax().split("_")[0]
+                switches.at[i, "max_speed"] = switch_speeds.max()
 
         return switches
 
@@ -440,114 +441,16 @@ class SoccerCPD:
         fig = plt.figure(figsize=(19.2, 10.8), dpi=100)
         gs = gridspec.GridSpec(2, 4, left=0.05, right=0.95, wspace=0.3, hspace=0.1)
 
-        xlim = 25
-        ylim = 30
-
         for idx, form_period in enumerate(self.form_periods["form_period"][:4]):
             fp_role_df = self.role_df[(self.role_df["form_period"] == form_period) & (self.role_df["role"].notna())]
-            role_xy = np.dot(self.form_periods.at[idx, "coords"], [[0, 1], [-1, 0]])
-            edge_mat = self.form_periods.at[idx, "edge_mat"]
-
+            fp_form = self.form_periods.loc[idx]
+            fp_role_labels = role_labels[form_period] if role_labels is not None else None
             plt.subplot(gs[0, idx])
-            role_period_records = self.role_periods[self.role_periods["form_period"] == form_period]
-            role_period_from = role_period_records["role_period"].iloc[0]
-            if len(role_period_records) == 1:
-                plt.title(f"Role Period {role_period_from}", fontsize=20)
-            else:
-                role_period_to = role_period_records["role_period"].iloc[-1]
-                plt.title(f"Role Periods {role_period_from}-{role_period_to}", fontsize=20)
-
-            plt.scatter(
-                -fp_role_df["y_norm"],
-                fp_role_df["x_norm"],
-                c=fp_role_df["role"],
-                vmin=0.5,
-                vmax=10.5,
-                cmap="tab10",
-                alpha=0.4,
-                zorder=0,
-            )
-            plt.scatter(
-                role_xy[:, 0],
-                role_xy[:, 1],
-                s=1200,
-                c="w",
-                edgecolors="k",
-                zorder=2,
-            )
-
-            for r in np.arange(10):
-                role_label = role_labels[form_period][r + 1] if role_labels is not None else r + 1
-                plt.annotate(
-                    role_label,
-                    xy=role_xy[r],
-                    ha="center",
-                    va="center",
-                    fontsize=15,
-                    zorder=3,
-                )
-                for s in np.arange(10):
-                    plt.plot(
-                        role_xy[[r, s], 0],
-                        role_xy[[r, s], 1],
-                        linewidth=edge_mat[r, s] ** 2 * 4,
-                        c="k",
-                        zorder=1,
-                    )
-
-            plt.xlim(-xlim, xlim)
-            plt.ylim(-ylim, ylim)
-            plt.vlines([-xlim, xlim], ymin=-ylim, ymax=ylim, color="k")
-            plt.hlines([-ylim, 0, ylim], xmin=-xlim, xmax=xlim, color="k", zorder=1)
-            plt.axis("off")
+            FormViz.show_graph(fp_role_df, fp_form, role_labels=fp_role_labels)
 
         ax = fig.add_subplot(gs[1, :])
-        box = ax.get_position()
-        xmin = box.x0 + box.width * 0.1 if anonymize else box.x0 + box.width * 0.15
-        ymin = box.y0 + box.height * 0.03
-        xlen = box.width * 0.9 if anonymize else box.width * 0.85
-        ylen = box.height * 0.95
-        ax.set_position([xmin, ymin, xlen, ylen])
-        plt.title("Timeline of Instructed Roles", fontsize=20)
-
-        roles_reshaped = self.role_df.pivot_table("base_role", "datetime", "player_id", aggfunc="first")
-        times = self.role_df[["datetime", "session", "time"]].drop_duplicates().sort_values(["session", "time"])
-        roles_reshaped = pd.merge(times, roles_reshaped.reset_index())
-        roles_resampled = []
-
-        for s in self.player_periods["session"].unique():
-            start_dt = self.player_periods.loc[self.player_periods["session"] == s, "start_dt"].iloc[0]
-            offset = f"{start_dt.second % 5}S"
-
-            session_roles_reshaped = roles_reshaped[roles_reshaped["session"] == s].set_index("datetime")
-            session_roles_reshaped = session_roles_reshaped.resample("5S", offset=offset).first()
-            session_roles_reshaped.at[session_roles_reshaped.index[0], "time"] = 0
-            roles_resampled.append(session_roles_reshaped)
-
-        if anonymize:
-            self.roster["display"] = [f"Player {i + 1}" for i in np.arange(len(self.roster))]
-        else:
-            self.roster["display"] = self.roster.apply(lambda x: f"{x['player_name']} ({x['squad_num']})", axis=1)
-
-        player_dict = self.roster["display"].to_dict()
-        roles_resampled = pd.concat(roles_resampled).rename(columns=player_dict)
-        players = [c for c in roles_resampled.columns if c not in ["session", "time"]]
-        sns.heatmap(roles_resampled[players].T, vmin=0.5, vmax=10.5, cmap="tab10", cbar=False)
-
-        xticks = []
-        for dt in self.role_periods["start_dt"]:
-            xticks.append(roles_resampled.index.get_loc(dt))
-        xticks.append(len(roles_resampled) - 1)
-
-        session_labels = roles_resampled["session"].iloc[xticks].apply(lambda x: f"H{x}-")
-        time_labels = roles_resampled["time"].iloc[xticks].apply(seconds_to_time_str)
-        labels = (session_labels + time_labels).values
-
-        ax.vlines(xticks, ymin=0, ymax=len(players), colors="k", linestyles="--")
-        ax.set_xticks(xticks)
-        ax.set_xticklabels(labels, rotation=45)
-        ax.set_xlabel("session-time")
-        ax.set_ylabel("player")
+        FormViz.show_timeline(self.role_df, ax, anonymize)
+        plt.title("Timeline of Long-Term Roles", fontsize=20)
 
         report_dir = f"{self.target_dir}/viz_report"
         report_path = f"{report_dir}/{self.activity_id}.png"
