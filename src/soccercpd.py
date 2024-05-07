@@ -12,12 +12,15 @@ from tqdm import tqdm
 from src.myconstants import *
 from src.rolerep import RoleRep
 from src.utils import (
+    aggregate_player_periods,
+    complete_perm,
     compute_delaunay_dists,
+    compute_switch_rate,
     decompose_perm_to_cycles,
     delaunay_edge_mat,
     detect_change_times,
-    hamming_dist,
     most_common,
+    reshape_traces,
     seconds_to_time_str,
 )
 
@@ -39,8 +42,8 @@ class SoccerCPD:
     ):
         self.activity_id = activity_id
         self.roster = team_roster
-        self.traces = SoccerCPD.reshape_traces(team_traces)
-        self.player_periods = SoccerCPD.construct_player_periods(team_traces)
+        self.traces = reshape_traces(team_traces)
+        self.player_periods = aggregate_player_periods(team_traces)
 
         self.apply_cpd = apply_cpd
         self.formcpd_method = formcpd_method
@@ -53,34 +56,6 @@ class SoccerCPD:
         self.role_labels = dict()
 
         self.target_dir = f"{DIR_DATA}/{formcpd_method}" if apply_cpd else f"{DIR_DATA}/noncpd"
-
-    @staticmethod
-    def reshape_traces(team_traces: pd.DataFrame):
-        trace_list = []
-        players = [c[:3] for c in team_traces.columns if c[3:] == "_x"]
-
-        for p in players:
-            cols = ["datetime", "session", "time", "player_period", f"{p}_x", f"{p}_y"]
-            player_trace = team_traces[cols].copy().rename(columns={f"{p}_x": "x", f"{p}_y": "y"})
-            player_trace["player_id"] = p
-            trace_list.append(player_trace)
-
-        return pd.concat(trace_list).set_index("datetime")
-
-    @staticmethod
-    def construct_player_periods(team_traces: pd.DataFrame):
-        grouped = team_traces.groupby("player_period")
-        sessions = grouped["session"].first()
-        start_dts = (grouped["datetime"].first() - timedelta(seconds=0.1)).rename("start_dt")
-        end_dts = grouped["datetime"].last().rename("end_dt")
-        return pd.concat([sessions, start_dts, end_dts], axis=1)
-
-    @staticmethod
-    def complete_perm(perm, role_set):
-        if perm.isnull().sum():
-            return perm.fillna(list(role_set - set(perm.dropna()))[0])
-        else:
-            return perm
 
     # align corresponding roles from different formation periods
     @staticmethod
@@ -109,14 +84,6 @@ class SoccerCPD:
         role_row["base_role"] = base_perm[role_row["base_role"]]
         return role_row
 
-    # recompute the "switch rate" of a frame by the Hamming distance
-    # between the temporary roles and the instructed roles
-    @staticmethod
-    def recompute_switch_rate(moment_role_df: pd.DataFrame):
-        hamming = hamming_dist(moment_role_df["role"], moment_role_df["base_role"])
-        moment_role_df["switch_rate"] = hamming / len(moment_role_df)
-        return moment_role_df
-
     # refind base roles per player period and recompute the switch rate per frame for the given role_df
     def reset_precomputed_role_df(self):
         for i in self.player_periods.index[1:]:
@@ -127,16 +94,16 @@ class SoccerCPD:
 
             # role_set = set(perms.dropna().iloc[0])
             role_set = set(np.arange(10) + 1)
-            perms = perms.apply(SoccerCPD.complete_perm, axis=1, args=(role_set,)).astype(int)
+            perms = perms.apply(complete_perm, axis=1, args=(role_set,)).astype(int)
             perms_str = perms.apply(lambda perm: np.array2string(perm.values), axis=1)
             base_perm_list = np.fromstring(most_common(perms_str)[1:-1], dtype="float32", sep=" ")
             base_perm_dict = dict(zip(perms.columns, base_perm_list))
 
             self.role_df.loc[pp_role_df.index, "base_role"] = pp_role_df["player_id"].map(base_perm_dict)
 
-        self.role_df = self.role_df.groupby("datetime", group_keys=False).apply(SoccerCPD.recompute_switch_rate)
+        self.role_df = self.role_df.groupby("datetime", group_keys=False).apply(compute_switch_rate)
 
-    def construct_role_summary(self):
+    def summarize_role_assignment(self) -> pd.DataFrame:
         grouped = self.role_df.groupby(["player_id", "role_period"], group_keys=False, as_index=False)
         role_summary = grouped[["player_period", "base_role"]].first()
         role_summary = pd.merge(role_summary, self.role_periods[HEADER_ROLE_PERIODS[:-1]])
@@ -237,7 +204,7 @@ class SoccerCPD:
             # generate the sequence of role permutations
             perms = valid_role_df.pivot_table("base_role", "datetime", "role", aggfunc="first")
             role_set = set(perms.dropna().iloc[0])
-            perms = perms.apply(SoccerCPD.complete_perm, axis=1, args=(role_set,)).astype(int)
+            perms = perms.apply(complete_perm, axis=1, args=(role_set,)).astype(int)
             perms_str = perms.apply(lambda perm: np.array2string(perm.values), axis=1)
             perm_list.append(perms_str.rename("perm").to_frame())
 
@@ -367,14 +334,14 @@ class SoccerCPD:
 
         # reflect the instructed roles and recompute switch rates in role_df
         self.role_df = self.role_df.apply(self.reassign_base_role, axis=1)
-        self.role_df = self.role_df.groupby("datetime", group_keys=False).apply(SoccerCPD.recompute_switch_rate)
+        self.role_df = self.role_df.groupby("datetime", group_keys=False).apply(compute_switch_rate)
         self.role_df, self.form_periods = SoccerCPD.align_formations(self.role_df, self.form_periods)
         self.role_df = pd.merge(self.role_df, self.roster[["squad_num", "player_name"]].reset_index())
         self.role_df.sort_values(by=["player_id", "datetime"], ignore_index=True, inplace=True)
 
         self.form_periods = self.form_periods.reset_index()[HEADER_FORM_PERIODS]
         self.role_periods = self.role_periods.reset_index()[HEADER_ROLE_PERIODS]
-        self.role_summary = self.construct_role_summary()
+        self.role_summary = self.summarize_role_assignment()
         print()
         print("-" * 78)
         print("Formation Periods:")

@@ -1,6 +1,6 @@
 import os
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from pprint import pprint
 from typing import List
 
@@ -18,6 +18,27 @@ from sympy.interactive import init_printing
 from src.myconstants import *
 
 init_printing(perm_cyclic=True, pretty_print=False)
+
+
+def reshape_traces(team_traces: pd.DataFrame) -> pd.DataFrame:
+    trace_list = []
+    players = [c[:3] for c in team_traces.columns if c[3:] == "_x"]
+
+    for p in players:
+        cols = ["datetime", "session", "time", "player_period", f"{p}_x", f"{p}_y"]
+        player_trace = team_traces[cols].copy().rename(columns={f"{p}_x": "x", f"{p}_y": "y"})
+        player_trace["player_id"] = p
+        trace_list.append(player_trace)
+
+    return pd.concat(trace_list).set_index("datetime")
+
+
+def aggregate_player_periods(team_traces: pd.DataFrame):
+    grouped = team_traces.groupby("player_period")
+    sessions = grouped["session"].first()
+    start_dts = (grouped["datetime"].first() - timedelta(seconds=0.1)).rename("start_dt")
+    end_dts = grouped["datetime"].last().rename("end_dt")
+    return pd.concat([sessions, start_dts, end_dts], axis=1)
 
 
 # apply Delaunay triangulation to the given player coordinates to obtain the role-adjacency matrix
@@ -39,7 +60,7 @@ def manhattan_dist(mat1, mat2):
     return np.abs(mat1 - mat2).sum()
 
 
-def most_common(player_roles):
+def most_common(player_roles: pd.DataFrame):
     try:
         counter = Counter(player_roles[player_roles.notna()])
         return counter.most_common(1)[0][0]
@@ -47,7 +68,7 @@ def most_common(player_roles):
         return np.nan
 
 
-def compute_delaunay_dists(form1: pd.Series, form2: pd.Series):
+def compute_delaunay_dists(form1: pd.Series, form2: pd.Series) -> float:
     cost_mat = distance_matrix(form1["coords"], form2["coords"])
     _, perm = linear_sum_assignment(cost_mat)
     edge_mat1 = form1["edge_mat"]
@@ -55,10 +76,23 @@ def compute_delaunay_dists(form1: pd.Series, form2: pd.Series):
     return np.abs(edge_mat1 - edge_mat2).sum()
 
 
+def compute_switch_rate(moment_role_df: pd.DataFrame) -> pd.DataFrame:
+    hamming = hamming_dist(moment_role_df["role"], moment_role_df["base_role"])
+    moment_role_df["switch_rate"] = hamming / len(moment_role_df)
+    return moment_role_df
+
+
 def seconds_to_time_str(x: float) -> str:
     minutes = int(x // 60)
     seconds = int(x % 60)
     return f"{minutes:02d}:{seconds:02d}"
+
+
+def complete_perm(perm: pd.Series, role_set: set) -> pd.Series:
+    if perm.isnull().sum():
+        return perm.fillna(list(role_set - set(perm.dropna()))[0])
+    else:
+        return perm
 
 
 def decompose_perm_to_cycles(perm: pd.Series, labels: dict) -> list:
