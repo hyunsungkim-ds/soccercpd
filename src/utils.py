@@ -20,24 +20,26 @@ from src.myconstants import *
 init_printing(perm_cyclic=True, pretty_print=False)
 
 
-def reshape_traces(team_traces: pd.DataFrame) -> pd.DataFrame:
-    trace_list = []
-    players = [c[:3] for c in team_traces.columns if c[3:] == "_x"]
+def reshape_traces(traces: pd.DataFrame) -> pd.DataFrame:
+    xy_list = []
+    players = [c[:3] for c in traces.columns if c[3:] == "_x"]
 
     for p in players:
         cols = ["datetime", "session", "time", "player_period", f"{p}_x", f"{p}_y"]
-        player_trace = team_traces[cols].copy().rename(columns={f"{p}_x": "x", f"{p}_y": "y"})
-        player_trace["player_id"] = p
-        trace_list.append(player_trace)
+        player_xy = traces[cols].copy().rename(columns={f"{p}_x": "x", f"{p}_y": "y"})
+        player_xy["player_id"] = p
+        xy_list.append(player_xy)
 
-    return pd.concat(trace_list).set_index("datetime")
+    return pd.concat(xy_list).set_index("datetime")
 
 
-def aggregate_player_periods(team_traces: pd.DataFrame):
-    grouped = team_traces.groupby("player_period")
-    sessions = grouped["session"].first()
-    start_dts = (grouped["datetime"].first() - timedelta(seconds=0.1)).rename("start_dt")
-    end_dts = grouped["datetime"].last().rename("end_dt")
+def aggregate_player_periods(xy: pd.DataFrame):
+    if "datetime" not in xy.columns:
+        xy = xy.reset_index().rename(columns={"index": "datetime"})
+    grouper = xy.groupby("player_period")
+    sessions = grouper["session"].first()
+    start_dts = grouper["datetime"].first().rename("start_dt") - timedelta(seconds=0.1)
+    end_dts = grouper["datetime"].last().rename("end_dt")
     return pd.concat([sessions, start_dts, end_dts], axis=1)
 
 

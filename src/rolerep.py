@@ -32,7 +32,7 @@ class RoleRep:
         for i, player_id in enumerate(xy["player_id"].unique()):
             player_xy = xy[xy["player_id"] == player_id]
             resampler = player_xy.resample(freq, closed="right", label="right")
-            player_role_seq = resampler[HEADER_ROLE_DETAILS[:4]].last()
+            player_role_seq = resampler[HEADER_ROLE_SEQ[:4]].last()
             player_role_seq["x"] = resampler["x"].mean()
             player_role_seq["y"] = resampler["y"].mean()
             player_role_seq["x_norm"] = np.nan
@@ -42,7 +42,7 @@ class RoleRep:
             player_role_seq["role"] = i + 1
             player_role_seq["base_role"] = i + 1
             player_role_seq["switch_rate"] = 0
-            role_seq.append(player_role_seq[HEADER_ROLE_DETAILS])
+            role_seq.append(player_role_seq[HEADER_ROLE_SEQ])
 
         role_seq = pd.concat(role_seq).reset_index().rename(columns={"index": "datetime"})
         return role_seq.groupby("datetime", group_keys=False).apply(RoleRep.normalize_locs)
@@ -93,7 +93,7 @@ class RoleRep:
         return role_seq, role_distns.sort_values(by=[label_group, "role"]).reset_index(drop=True)
 
     def hungarian(self, moment_roles: pd.DataFrame, role_distns: pd.DataFrame) -> float:
-        cost_mat = moment_roles[moment_roles.columns[(len(HEADER_ROLE_DETAILS) + 1) :]].values
+        cost_mat = moment_roles[moment_roles.columns[(len(HEADER_ROLE_SEQ) + 1) :]].values
         row_idx, col_idx = linear_sum_assignment(cost_mat)
         base_roles = moment_roles["base_role"].iloc[row_idx].values
         temp_roles = role_distns["role"].iloc[col_idx].values

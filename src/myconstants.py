@@ -1,73 +1,14 @@
+import pandas as pd
+
 # File paths and variable names
 DIR_DATA = "./data"
 DIR_UGP_DATA = f"{DIR_DATA}/ugp"
 DIR_TEMP_DATA = f"{DIR_DATA}/rtemp"
 
-VARNAME_ACTIVITY_RECORDS = "activity_records"
-VARNAME_PLAYER_RECORDS = "player_records"
-VARNAME_PLAYER_PERIODS = "player_periods"
-
-# Column names and headers
-LABEL_ID = "id"
-LABEL_NAME = "name"
-LABEL_VARNAME = "varname"
-LABEL_RECORDS = "records"
-LABEL_HEADER = "header"
-LABEL_DTYPES = "dtypes"
-LABEL_PATH = "path"
-LABEL_FILE = "file"
-LABEL_EXTENSION = "extension"
-
-LABEL_TEAM_ID = "team_id"
-LABEL_TYPE = "type"
-LABEL_DATE = "date"
-LABEL_TEAM_NAME = "team_name"
-LABEL_HOME_AWAY = "home_away"
-LABEL_ROTATED_SESSION = "rotated_session"
-LABEL_DATA_SAVED = "data_saved"
-LABEL_STATS_SAVED = "stats_saved"
-HEADER_ACTIVITY_RECORDS = [
-    "activity_id",
-    LABEL_TEAM_ID,
-    LABEL_TYPE,
-    LABEL_DATE,
-    LABEL_TEAM_NAME,
-    LABEL_HOME_AWAY,
-    LABEL_ROTATED_SESSION,
-    LABEL_DATA_SAVED,
-    LABEL_STATS_SAVED,
-]
-
+# DataFrame headers
 HEADER_ROSTER = ["player_id", "squad_num", "player_name"]
-HEADER_PLAYER_RECORDS = ["activity_id", LABEL_DATE, LABEL_TEAM_NAME] + HEADER_ROSTER
 
-HEADER_PLAYER_PERIODS = [
-    "activity_id",
-    "phase",
-    LABEL_TYPE,
-    "session",
-    "time",
-    "start_dt",
-    "end_dt",
-    "duration",
-    "players",
-]
-
-LABEL_UNIXTIME = "unixtime"
-LABEL_SPEED = "speed"
-HEADER_UGP = [
-    "player_code",
-    "session",
-    "time",
-    LABEL_UNIXTIME,
-    "phase",
-    "duration",
-    "x",
-    "y",
-    LABEL_SPEED,
-]
-
-HEADER_ROLE_DETAILS = [
+HEADER_ROLE_SEQ = [
     "player_id",
     "session",
     "time",
@@ -84,7 +25,6 @@ HEADER_ROLE_DETAILS = [
 ]
 
 HEADER_FORM_PERIODS = [
-    "activity_id",
     "form_period",
     "session",
     "start_dt",
@@ -94,7 +34,6 @@ HEADER_FORM_PERIODS = [
     "edge_mat",
 ]
 HEADER_ROLE_PERIODS = [
-    "activity_id",
     "form_period",
     "role_period",
     "session",
@@ -104,7 +43,6 @@ HEADER_ROLE_PERIODS = [
     "base_perm",
 ]
 HEADER_ROLE_ALIGNS = [
-    "activity_id",
     "form_period",
     "base_role",
     "aligned_role",
@@ -112,7 +50,6 @@ HEADER_ROLE_ALIGNS = [
     "y",
 ]
 HEADER_ROLE_SUMMARY = [
-    "activity_id",
     "player_period",
     "form_period",
     "role_period",
@@ -121,8 +58,6 @@ HEADER_ROLE_SUMMARY = [
     "end_dt",
     "duration",
     "player_id",
-    "squad_num",
-    "player_name",
     "base_role",
     "x",
     "y",
@@ -139,3 +74,16 @@ MAX_SWITCH_RATE = 0.8
 MAX_PVAL = 0.01
 MIN_PERIOD_DUR = 300
 MIN_FORM_DIST = 7
+
+ROLE_TEMPLATE = pd.DataFrame(
+    [
+        ["343", "LWB", "LCB", "CB", "RCB", "RWB", "RCM", "LCM", "LM", "CF", "RM"],
+        ["352", "LWB", "LCB", "CB", "RCB", "RWB", "CDM", "LCM", "RCM", "LCF", "RCF"],
+        ["442", "LB", "LCB", "RCB", "RB", "LCM", "RCM", "LM", "LCF", "RCF", "RM"],
+        ["4231", "LB", "LCB", "RCB", "RB", "LDM", "RDM", "CAM", "LM", "CF", "RM"],
+        ["433", "LB", "LCB", "RCB", "RB", "CDM", "LCM", "RCM", "LM", "CF", "RM"],
+        ["4132", "LB", "LCB", "RCB", "RB", "CDM", "CAM", "LM", "LCF", "RCF", "RM"],
+        ["others"] + [f"R{i}" for i in list(range(1, 11))],
+    ],
+    columns=["formation"] + list(range(1, 11)),
+).set_index("formation")
