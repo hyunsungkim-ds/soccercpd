@@ -124,7 +124,7 @@ class SoccerCPD:
         perm_list = []
 
         for session in self.data["session"].unique():
-            print(f"\n{'-' * 33} Session {session} {'-' * 34}")
+            print(f"\n{'-' * 25} Session {session} {'-' * 26}")
             player_periods = self.player_periods[self.player_periods["session"] == session]
             session_start_dt = pd.to_datetime(player_periods["start_dt"].iloc[0])
             session_end_dt = pd.to_datetime(player_periods["end_dt"].iloc[-1])
@@ -328,7 +328,7 @@ class SoccerCPD:
         self.role_periods = self.role_periods.reset_index()[HEADER_ROLE_PERIODS]
         self.role_summary = self.summarize_role_assignment()
         print()
-        print("-" * 78)
+        print("-" * 73)
         print("Formation Periods:")
         print(self.form_periods[HEADER_FORM_PERIODS[1:-2]])
         print()
@@ -401,7 +401,7 @@ class SoccerCPD:
 
         return switches
 
-    def visualize(self, match_id: int, roster: pd.DataFrame = None, role_labels=None, save=False):
+    def visualize(self, match_id: int = None, roster: pd.DataFrame = None, role_labels=None, save=False):
         import matplotlib.gridspec as gridspec
         import matplotlib.pyplot as plt
         import seaborn as sns
@@ -432,14 +432,16 @@ class SoccerCPD:
         plot_timeline(self.role_seq, roster, ax)
         plt.title("Timeline of Long-Term Roles", fontsize=18)
 
-        report_dir = f"{self.target_dir}/viz_report"
-        report_path = f"{report_dir}/{match_id}.png"
-        if not os.path.exists(f"{self.target_dir}"):
-            os.mkdir(f"{self.target_dir}")
-        if not os.path.exists(report_dir):
-            os.mkdir(report_dir)
-
         if save:
+            assert match_id is not None
+
+            report_dir = f"{self.target_dir}/viz_report"
+            report_path = f"{report_dir}/{match_id}.png"
+            if not os.path.exists(f"{self.target_dir}"):
+                os.mkdir(f"{self.target_dir}")
+            if not os.path.exists(report_dir):
+                os.mkdir(report_dir)
+
             plt.savefig(report_path, bbox_inches="tight")
             plt.close(fig)
             print(f"'{report_path}' saving done.")

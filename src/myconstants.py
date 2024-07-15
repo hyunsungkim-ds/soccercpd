@@ -6,8 +6,6 @@ DIR_UGP_DATA = f"{DIR_DATA}/ugp"
 DIR_TEMP_DATA = f"{DIR_DATA}/rtemp"
 
 # DataFrame headers
-HEADER_ROSTER = ["player_id", "squad_num", "player_name"]
-
 HEADER_ROLE_SEQ = [
     "player_id",
     "session",
@@ -23,7 +21,6 @@ HEADER_ROLE_SEQ = [
     "base_role",
     "switch_rate",
 ]
-
 HEADER_FORM_PERIODS = [
     "form_period",
     "session",
@@ -73,7 +70,7 @@ SCALAR_TIME = 60
 MAX_SWITCH_RATE = 0.8
 MAX_PVAL = 0.01
 MIN_PERIOD_DUR = 300
-MIN_FORM_DIST = 7
+MIN_FORM_DIST = 6
 
 ROLE_TEMPLATE = pd.DataFrame(
     [
