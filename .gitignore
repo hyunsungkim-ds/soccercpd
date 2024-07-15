@@ -1,6 +1,5 @@
 # Private files
-private_data/
-private_notebooks/
+private_*/
 
 # Data files
 data/ugp/*.ugp
