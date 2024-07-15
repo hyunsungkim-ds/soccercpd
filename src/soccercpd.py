@@ -9,7 +9,6 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial import distance_matrix
 from tqdm import tqdm
 
-from src.formviz import FormViz
 from src.myconstants import *
 from src.rolerep import RoleRep
 from src.utils import (
@@ -22,6 +21,7 @@ from src.utils import (
     detect_change_times,
     most_common,
 )
+from src.visualize import plot_graph, plot_timeline
 
 pd.set_option("display.width", 250)
 pd.set_option("display.max_rows", 100)
@@ -401,7 +401,7 @@ class SoccerCPD:
 
         return switches
 
-    def visualize(self, match_id: int, role_labels=None, anonymize=False):
+    def visualize(self, match_id: int, roster: pd.DataFrame = None, role_labels=None, save=False):
         import matplotlib.gridspec as gridspec
         import matplotlib.pyplot as plt
         import seaborn as sns
@@ -410,18 +410,27 @@ class SoccerCPD:
         sns.set(font_scale=1.5)
 
         fig = plt.figure(figsize=(19.2, 10.8), dpi=100)
-        gs = gridspec.GridSpec(2, 4, left=0.05, right=0.95, wspace=0.3, hspace=0.1)
+        gs = gridspec.GridSpec(2, 4, left=0.1, right=0.9, bottom=0.1, top=0.9, wspace=0.2, hspace=0.2)
 
         for idx, form_period in enumerate(self.form_periods["form_period"][:4]):
             fp_role_seq = self.role_seq[(self.role_seq["form_period"] == form_period) & (self.role_seq["role"].notna())]
-            fp_form = self.form_periods.loc[idx]
+            fp_formation = self.form_periods.loc[idx]
+            fp_role_periods = self.role_periods[self.role_periods["form_period"] == form_period]
             fp_role_labels = role_labels[form_period] if role_labels is not None else None
+
             plt.subplot(gs[0, idx])
-            FormViz.show_graph(fp_role_seq, fp_form, role_labels=fp_role_labels)
+            plot_graph(fp_role_seq, fp_formation, role_labels=fp_role_labels)
+
+            start_rp = fp_role_periods["role_period"].min()
+            if len(fp_role_periods) == 1:
+                plt.title(f"Role Period {start_rp}", fontsize=18)
+            else:
+                end_rp = fp_role_periods["role_period"].max()
+                plt.title(f"Role Periods {start_rp}-{end_rp}", fontsize=18)
 
         ax = fig.add_subplot(gs[1, :])
-        FormViz.show_timeline(self.role_seq, ax, anonymize)
-        plt.title("Timeline of Long-Term Roles", fontsize=20)
+        plot_timeline(self.role_seq, roster, ax)
+        plt.title("Timeline of Long-Term Roles", fontsize=18)
 
         report_dir = f"{self.target_dir}/viz_report"
         report_path = f"{report_dir}/{match_id}.png"
@@ -430,9 +439,13 @@ class SoccerCPD:
         if not os.path.exists(report_dir):
             os.mkdir(report_dir)
 
-        plt.savefig(report_path)
-        plt.close(fig)
-        print(f"'{report_path}' saving done.")
+        if save:
+            plt.savefig(report_path, bbox_inches="tight")
+            plt.close(fig)
+            print(f"'{report_path}' saving done.")
+        else:
+            plt.show()
+            plt.close(fig)
 
     def save_stats(self, match_id: int, form_summary=True, role_summary=True, role_seq=True):
         if not os.path.exists(f"{self.target_dir}"):

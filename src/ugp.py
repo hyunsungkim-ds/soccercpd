@@ -6,16 +6,12 @@ from tqdm import tqdm
 
 
 class UGP:
-    def __init__(self, activity_id: int, roster=True) -> None:
+    def __init__(self, activity_id: int) -> None:
         self.activity_id = activity_id
 
         player_periods = pd.read_pickle("data/player_periods.pkl")
         player_periods = player_periods[player_periods["activity_id"] == self.activity_id].copy()
         self.player_periods = player_periods.set_index("player_period").loc[1:]
-
-        if roster:
-            player_records = pd.read_csv("data/player_records.csv", header=0)
-            self.roster = player_records[player_records["activity_id"] == activity_id].set_index("player_id")
 
         self.data = pd.read_pickle(f"data/ugp/{activity_id}.ugp")
         self.inplay_data = None
