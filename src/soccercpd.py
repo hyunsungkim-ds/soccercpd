@@ -105,7 +105,7 @@ class SoccerCPD:
         role_summary["y"] = role_summary.apply(lambda x: x["coords"][x["base_role"] - 1, 1], axis=1)
 
         # role_summary = pd.merge(role_summary, self.roster[["squad_num", "player_name"]].reset_index())
-        return role_summary[HEADER_ROLE_SUMMARY].astype({"player_period": int})
+        return role_summary[HEADER_ROLE_SUMMARY[1:]].astype({"player_period": int})
 
     def run(self, precomputed_path=None, freq="5S", max_sr=MAX_SWITCH_RATE):
         form_periods = []
@@ -290,7 +290,7 @@ class SoccerCPD:
 
                 period_start_dt = self.player_periods.at[i, "start_dt"]
                 offset = f"{period_start_dt.minute * SCALAR_TIME + period_start_dt.second}S"
-                resampler = period_perms_str.resample("5T", closed="right", offset=offset)
+                resampler = period_perms_str.resample("5T", closed="left", offset=offset)
 
                 base_perms = resampler.apply(most_common).reset_index()
                 base_perms["end_dt"] = base_perms["datetime"].shift(-1)
@@ -312,10 +312,18 @@ class SoccerCPD:
 
         # label formation and role periods to the timestamps in role_seq
         match_end_dt = self.player_periods["end_dt"].iloc[-1]
-        form_bins = self.form_periods["start_dt"].tolist() + [match_end_dt]
-        role_bins = self.role_periods["start_dt"].tolist() + [match_end_dt]
-        self.role_seq["form_period"] = pd.cut(self.role_seq["datetime"], bins=form_bins, labels=self.form_periods.index)
-        self.role_seq["role_period"] = pd.cut(self.role_seq["datetime"], bins=role_bins, labels=self.role_periods.index)
+        self.role_seq["form_period"] = pd.cut(
+            self.role_seq["datetime"],
+            bins=self.form_periods["start_dt"].tolist() + [match_end_dt],
+            right=False,
+            labels=self.form_periods.index,
+        )
+        self.role_seq["role_period"] = pd.cut(
+            self.role_seq["datetime"],
+            bins=self.role_periods["start_dt"].tolist() + [match_end_dt],
+            right=False,
+            labels=self.role_periods.index,
+        )
 
         # reflect the instructed roles and recompute switch rates in role_seq
         self.role_seq = self.role_seq.apply(self.reassign_base_role, axis=1)
@@ -430,7 +438,7 @@ class SoccerCPD:
 
         ax = fig.add_subplot(gs[1, :])
         plot_timeline(self.role_seq, roster, ax)
-        plt.title("Timeline of Long-Term Roles", fontsize=18)
+        plt.title("Role Change Timeline", fontsize=18)
 
         if save:
             assert match_id is not None

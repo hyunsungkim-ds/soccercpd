@@ -31,14 +31,14 @@ class RoleRep:
 
         for i, player_id in enumerate(xy["player_id"].unique()):
             player_xy = xy[xy["player_id"] == player_id]
-            resampler = player_xy.resample(freq, closed="right", label="right")
-            player_role_seq = resampler[HEADER_ROLE_SEQ[:4]].last()
+            resampler = player_xy.resample(freq, closed="left", label="left")
+            player_role_seq = resampler[HEADER_ROLE_SEQ[:4]].first()
             player_role_seq["x"] = resampler["x"].mean()
             player_role_seq["y"] = resampler["y"].mean()
             player_role_seq["x_norm"] = np.nan
             player_role_seq["y_norm"] = np.nan
-            player_role_seq["form_period"] = resampler["form_period"].last()
-            player_role_seq["role_period"] = resampler["role_period"].last()
+            player_role_seq["form_period"] = resampler["form_period"].first()
+            player_role_seq["role_period"] = resampler["role_period"].first()
             player_role_seq["role"] = i + 1
             player_role_seq["base_role"] = i + 1
             player_role_seq["switch_rate"] = 0

@@ -40,6 +40,7 @@ HEADER_ROLE_PERIODS = [
     "base_perm",
 ]
 HEADER_ROLE_ALIGNS = [
+    "activity_id",
     "form_period",
     "base_role",
     "aligned_role",
@@ -47,6 +48,7 @@ HEADER_ROLE_ALIGNS = [
     "y",
 ]
 HEADER_ROLE_SUMMARY = [
+    "activity_id",
     "player_period",
     "form_period",
     "role_period",

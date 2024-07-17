@@ -36,10 +36,14 @@ def reshape_traces(traces: pd.DataFrame) -> pd.DataFrame:
 def aggregate_player_periods(xy: pd.DataFrame):
     if "datetime" not in xy.columns:
         xy = xy.reset_index().rename(columns={"index": "datetime"})
+
     grouper = xy.groupby("player_period")
+    freq = round(xy["time"].iloc[1] - xy["time"].iloc[0], 3)
+
     sessions = grouper["session"].first()
-    start_dts = grouper["datetime"].first().rename("start_dt") - timedelta(seconds=0.1)
-    end_dts = grouper["datetime"].last().rename("end_dt")
+    start_dts = grouper["datetime"].first().rename("start_dt")
+    end_dts = grouper["datetime"].last().rename("end_dt") + timedelta(seconds=freq)
+
     return pd.concat([sessions, start_dts, end_dts], axis=1)
 
 

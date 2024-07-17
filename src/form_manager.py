@@ -75,7 +75,7 @@ class FormManager:
             self.form_summary[["activity_id", "form_period", "formation"]],
         )
         self.role_summary = pd.merge(self.role_summary, role_aligns).sort_values(
-            ["activity_id", "role_period", "squad_num"], ignore_index=True
+            ["activity_id", "role_period", "player_id"], ignore_index=True
         )
 
     @staticmethod
@@ -114,8 +114,6 @@ class FormManager:
 
         xlim = 30
         ylim = 24
-        # plt.xlim(-xlim - 500, xlim + 500)
-        # plt.ylim(-ylim - 500, ylim + 500)
         plt.xlim(-xlim, xlim)
         plt.ylim(-ylim, ylim)
         plt.vlines([-xlim, 0, xlim], ymin=-ylim, ymax=ylim, color="k", zorder=0)
