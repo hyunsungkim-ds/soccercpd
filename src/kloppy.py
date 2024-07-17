@@ -106,7 +106,12 @@ class Kloppy:
 
             col_dict = {c: c.split("_")[-1] for c in self.data.columns if c.startswith(p)}
             player_data = self.data[col_dict.keys()].copy().rename(columns=col_dict)
+
             player_data["team"] = p.split("_")[0]
+            if p.split("_")[0] == "away":
+                player_data["x"] = -player_data["x"]
+                player_data["y"] = -player_data["y"]
+
             player_data["player_id"] = int(p.split("_")[1])
             player_data["player_period"] = self.data[f"{p.split('_')[0]}_pp"]
 

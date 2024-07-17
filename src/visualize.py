@@ -1,4 +1,5 @@
 from datetime import timedelta
+from typing import Dict
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,9 +13,9 @@ from src.utils import seconds_to_time_str
 def plot_graph(
     role_seq: pd.DataFrame = None,
     formation: pd.Series = None,
+    role_labels: Dict[int, str] = None,
     show_edges=True,
     annotate=True,
-    role_labels=None,
     xlim=30,
     ylim=35,
 ):

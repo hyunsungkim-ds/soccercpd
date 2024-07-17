@@ -45,7 +45,7 @@ class SoccerCPD:
         self.form_periods = pd.DataFrame(columns=HEADER_FORM_PERIODS)
         self.role_periods = pd.DataFrame(columns=HEADER_ROLE_PERIODS)
         self.role_summary = None
-        self.role_labels = dict()
+        self.role_labels = None
 
         self.target_dir = f"{DIR_DATA}/{formcpd_method}" if apply_cpd else f"{DIR_DATA}/noncpd"
 
@@ -347,8 +347,13 @@ class SoccerCPD:
     def label_roles(self, role_summary: pd.DataFrame, form_summary: pd.DataFrame = None, form_labels: dict = None):
         assert form_summary is not None or form_labels is not None
 
-        self.role_labels = dict()
-        for i, fp in enumerate(self.form_periods["form_period"]):
+        role_labels = dict()
+        self.form_periods["formation"] = np.nan
+        self.role_summary["aligned_role"] = np.nan
+
+        for i in self.form_periods.index:
+            fp = self.form_periods.at[i, "form_period"]
+
             if form_labels:
                 formation = form_labels[fp]
             else:
@@ -365,11 +370,14 @@ class SoccerCPD:
             cost_mat = distance_matrix(mean_xy.values, self.form_periods.at[0, "coords"])
             _, perm = linear_sum_assignment(cost_mat)
 
-            role_labels = ROLE_TEMPLATE.loc[formation]
-            role_labels.index = perm + 1
-            self.role_labels[fp] = role_labels.to_dict()
+            self.form_periods.at[i, "formation"] = formation
+            role_labels[fp] = dict(zip(perm + 1, mean_xy.index))
+            fp_rs = self.role_summary.loc[self.role_summary["form_period"] == fp]
+            self.role_summary.loc[fp_rs.index, "aligned_role"] = fp_rs["base_role"].replace(role_labels[fp])
 
-    def detect_switches(self) -> pd.DataFrame:
+        self.role_labels = pd.DataFrame(role_labels).T[np.arange(len(perm)) + 1]
+
+    def detect_switches(self, role_labels: pd.DataFrame) -> pd.DataFrame:
         self.role_seq["roleperm"] = self.role_seq.apply(lambda x: (x["base_role"], x["role"]), axis=1)
         roleperms = self.role_seq.pivot_table("roleperm", "datetime", "player_id", aggfunc="first")
         roleperms["switch_rate"] = self.role_seq.groupby("datetime")["switch_rate"].first()
@@ -395,7 +403,7 @@ class SoccerCPD:
             end_dt = switches.at[i, "end_dt"]
             form_period = switches.at[i, "form_period"]
             roleperm = roleperms.loc[start_dt]
-            switches.at[i, "switch_roles"] = decompose_perm_to_cycles(roleperm, self.role_labels[form_period])
+            switches.at[i, "switch_roles"] = decompose_perm_to_cycles(roleperm, role_labels.loc[form_period])
 
             role_players = self.role_seq.set_index("datetime")[["base_role", "player_id"]].loc[start_dt]
             role_players = role_players.set_index("base_role")["player_id"].to_dict()
@@ -424,10 +432,10 @@ class SoccerCPD:
             fp_role_seq = self.role_seq[(self.role_seq["form_period"] == form_period) & (self.role_seq["role"].notna())]
             fp_formation = self.form_periods.loc[idx]
             fp_role_periods = self.role_periods[self.role_periods["form_period"] == form_period]
-            fp_role_labels = role_labels[form_period] if role_labels is not None else None
+            fp_role_labels = role_labels.loc[form_period].to_dict() if role_labels is not None else None
 
             plt.subplot(gs[0, idx])
-            plot_graph(fp_role_seq, fp_formation, role_labels=fp_role_labels)
+            plot_graph(fp_role_seq, fp_formation, fp_role_labels)
 
             start_rp = fp_role_periods["role_period"].min()
             if len(fp_role_periods) == 1:
@@ -453,6 +461,7 @@ class SoccerCPD:
             plt.savefig(report_path, bbox_inches="tight")
             plt.close(fig)
             print(f"'{report_path}' saving done.")
+
         else:
             plt.show()
             plt.close(fig)

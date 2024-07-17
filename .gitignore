@@ -2,7 +2,8 @@
 private_*/
 
 # Data files
-data/ugp/*.ugp
+data/kloppy/
+data/ugp/
 data/gseg_avg/
 data/gseg_union/
 data/kernel_linear/
