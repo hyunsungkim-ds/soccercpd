@@ -1,3 +1,4 @@
+import fnmatch
 from datetime import datetime
 
 import numpy as np
@@ -72,7 +73,7 @@ class Kloppy:
         player_periods = []
 
         for team in ["home", "away"]:
-            self.data[f"{team}_pp"] = 0
+            self.data[f"{team}_phase"] = 0
 
             team_play_records = self.play_records[self.play_records.index.str.startswith(team)]
             session_starts = self.data.groupby("period_id")["frame_id"].first().values
@@ -80,7 +81,7 @@ class Kloppy:
 
             for i, t_start in enumerate(chg_frames[:-1]):
                 t_end = chg_frames[i + 1] - 1
-                self.data.loc[t_start:t_end, f"{team}_pp"] = i + 1
+                self.data.loc[t_start:t_end, f"{team}_phase"] = i + 1
 
                 team_x_cols = [c for c in self.data.columns if c[:4] == team and c[-2:] == "_x"]
                 if team == "home":
@@ -92,15 +93,29 @@ class Kloppy:
 
             self.player_periods = pd.DataFrame(player_periods)
 
+    def rotate_pitch(self):
+        home_x_cols = fnmatch.filter(self.data.columns, "home_*_x")
+        home_y_cols = fnmatch.filter(self.data.columns, "home_*_y")
+        away_x_cols = fnmatch.filter(self.data.columns, "away_*_x")
+        away_y_cols = fnmatch.filter(self.data.columns, "away_*_y")
+        xy_cols = home_x_cols + home_y_cols + away_x_cols + away_y_cols
+
+        for i in self.data["period_id"].unique():
+            session_data = self.data[self.data["period_id"] == i]
+            home_mean_x = session_data[home_x_cols].mean().mean()
+            away_mean_x = session_data[away_x_cols].mean().mean()
+            if home_mean_x > away_mean_x:
+                self.data.loc[session_data.index, xy_cols] = -session_data[xy_cols]
+
     def convert_to_soccercpd_input(self, exclude_gks=True):
-        if "home_pp" not in self.data.columns:
+        if "home_phase" not in self.data.columns:
             self.label_player_periods()
 
         time_cols = ["datetime", "period_id", "timestamp", "frame_id"]
-        gks = self.player_periods["goalkeeper"].unique()
+        gks = self.player_periods["goalkeeper"].unique() if exclude_gks else []
         data_list = []
 
-        for p in self.play_records.index:
+        for p in self.players:
             if exclude_gks and int(p.split("_")[-1]) in gks:
                 continue
 
@@ -113,7 +128,7 @@ class Kloppy:
                 player_data["y"] = -player_data["y"]
 
             player_data["player_id"] = int(p.split("_")[1])
-            player_data["player_period"] = self.data[f"{p.split('_')[0]}_pp"]
+            player_data["player_period"] = self.data[f"{p.split('_')[0]}_phase"]
 
             data_list.append(pd.concat([self.data[time_cols], player_data], axis=1))
 

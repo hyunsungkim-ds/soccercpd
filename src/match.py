@@ -2,17 +2,9 @@ import os
 from datetime import datetime, timedelta
 from typing import Tuple
 
-import matplotlib.image as mpimg
-import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import rpy2.robjects.packages as rpackages
-from matplotlib import animation
-from scipy.optimize import linear_sum_assignment
-from scipy.spatial import distance_matrix
-from tqdm import tqdm
 
-from src.form_manager import FormManager
 from src.soccercpd import SoccerCPD
 
 

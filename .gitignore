@@ -4,6 +4,7 @@ private_*/
 # Data files
 data/kloppy/
 data/ugp/
+data/roster/
 data/gseg_avg/
 data/gseg_union/
 data/kernel_linear/

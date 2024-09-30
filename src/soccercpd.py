@@ -126,8 +126,8 @@ class SoccerCPD:
         for session in self.data["session"].unique():
             print(f"\n{'-' * 25} Session {session} {'-' * 26}")
             player_periods = self.player_periods[self.player_periods["session"] == session]
-            session_start_dt = pd.to_datetime(player_periods["start_dt"].iloc[0])
-            session_end_dt = pd.to_datetime(player_periods["end_dt"].iloc[-1])
+            session_start_dt = player_periods["start_dt"].iloc[0]
+            session_end_dt = player_periods["end_dt"].iloc[-1]
             session_data = self.data[self.data["session"] == session]
 
             grouper = session_data.dropna(subset="x").groupby("time", group_keys=False)
@@ -344,8 +344,13 @@ class SoccerCPD:
         print(self.role_periods[HEADER_ROLE_PERIODS[1:-1]])
         print()
 
-    def label_roles(self, role_summary: pd.DataFrame, form_summary: pd.DataFrame = None, form_labels: dict = None):
-        assert form_summary is not None or form_labels is not None
+    def label_roles(
+        self,
+        role_benchmarks: pd.DataFrame,
+        form_benchmarks: pd.DataFrame = None,
+        form_labels: dict = None,
+    ):
+        assert form_benchmarks is not None or form_labels is not None
 
         role_labels = dict()
         self.form_periods["formation"] = np.nan
@@ -357,15 +362,15 @@ class SoccerCPD:
             if form_labels:
                 formation = form_labels[fp]
             else:
-                form_summary["dist_to_sample"] = 0
-                for j in form_summary.index:
+                form_benchmarks["dist_to_sample"] = 0
+                for j in form_benchmarks.index:
                     ref_form = self.form_periods.loc[i]
-                    cur_form = form_summary.loc[j]
-                    form_summary.at[j, "dist_to_sample"] = compute_delaunay_dists(ref_form, cur_form)
-                formation = form_summary.groupby("formation")["dist_to_sample"].mean().idxmin()
+                    cur_form = form_benchmarks.loc[j]
+                    form_benchmarks.at[j, "dist_to_sample"] = compute_delaunay_dists(ref_form, cur_form)
+                formation = form_benchmarks.groupby("formation")["dist_to_sample"].mean().idxmin()
 
-            group_role_summary = role_summary[role_summary["formation"] == formation]
-            mean_xy = group_role_summary.groupby("aligned_role")[["x", "y"]].mean()
+            group_role_benchmarks = role_benchmarks[role_benchmarks["formation"] == formation]
+            mean_xy = group_role_benchmarks.groupby("aligned_role")[["x", "y"]].mean()
 
             cost_mat = distance_matrix(mean_xy.values, self.form_periods.at[0, "coords"])
             _, perm = linear_sum_assignment(cost_mat)
