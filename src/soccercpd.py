@@ -346,11 +346,11 @@ class SoccerCPD:
 
     def label_roles(
         self,
-        role_benchmarks: pd.DataFrame,
-        form_benchmarks: pd.DataFrame = None,
+        benchmark_roles: pd.DataFrame,
+        benchmark_forms: pd.DataFrame = None,
         form_labels: dict = None,
     ):
-        assert form_benchmarks is not None or form_labels is not None
+        assert benchmark_forms is not None or form_labels is not None
 
         role_labels = dict()
         self.form_periods["formation"] = np.nan
@@ -362,25 +362,32 @@ class SoccerCPD:
             if form_labels:
                 formation = form_labels[fp]
             else:
-                form_benchmarks["dist_to_sample"] = 0
-                for j in form_benchmarks.index:
+                benchmark_forms["dist_to_sample"] = 0
+                for j in benchmark_forms.index:
                     ref_form = self.form_periods.loc[i]
-                    cur_form = form_benchmarks.loc[j]
-                    form_benchmarks.at[j, "dist_to_sample"] = compute_delaunay_dists(ref_form, cur_form)
-                formation = form_benchmarks.groupby("formation")["dist_to_sample"].mean().idxmin()
-
-            group_role_benchmarks = role_benchmarks[role_benchmarks["formation"] == formation]
-            mean_xy = group_role_benchmarks.groupby("aligned_role")[["x", "y"]].mean()
-
-            cost_mat = distance_matrix(mean_xy.values, self.form_periods.at[0, "coords"])
-            _, perm = linear_sum_assignment(cost_mat)
+                    cur_form = benchmark_forms.loc[j]
+                    benchmark_forms.at[j, "dist_to_sample"] = compute_delaunay_dists(ref_form, cur_form)
+                formation = benchmark_forms.groupby("formation")["dist_to_sample"].mean().idxmin()
 
             self.form_periods.at[i, "formation"] = formation
-            role_labels[fp] = dict(zip(perm + 1, mean_xy.index))
+            instance_xy = self.form_periods.at[i, "coords"]
+
+            if formation == "others":
+                args = {"col_x": "x", "col_y": "y", "filter": False}
+                role_distns: pd.Series = benchmark_roles.groupby("aligned_role").apply(RoleRep.estimate_mvn, **args)
+            else:
+                group_roles = benchmark_roles[benchmark_roles["formation"] == formation]
+                args = {"col_x": "x", "col_y": "y", "filter": False}
+                role_distns: pd.Series = group_roles.groupby("aligned_role").apply(RoleRep.estimate_mvn, **args)
+
+            cost_mat: pd.DataFrame = role_distns.apply(lambda n: pd.Series(-np.log(n.pdf(instance_xy))))
+            row_idx, col_idx = linear_sum_assignment(cost_mat.values)
+            role_labels[fp] = dict(zip(col_idx + 1, cost_mat.index[row_idx].values))
+
             fp_rs = self.role_summary.loc[self.role_summary["form_period"] == fp]
             self.role_summary.loc[fp_rs.index, "aligned_role"] = fp_rs["base_role"].replace(role_labels[fp])
 
-        self.role_labels = pd.DataFrame(role_labels).T[np.arange(len(perm)) + 1]
+        self.role_labels = pd.DataFrame(role_labels).T[np.arange(len(col_idx)) + 1]
 
     def detect_switches(self, role_labels: pd.DataFrame) -> pd.DataFrame:
         self.role_seq["roleperm"] = self.role_seq.apply(lambda x: (x["base_role"], x["role"]), axis=1)
