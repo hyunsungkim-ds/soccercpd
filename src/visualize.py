@@ -12,8 +12,8 @@ from src.utils import seconds_to_time_str
 
 def plot_graph(
     role_seq: pd.DataFrame = None,
-    formation: pd.Series = None,
     role_labels: Dict[int, str] = None,
+    form_graph: pd.Series = None,
     show_edges=True,
     annotate=True,
     xlim=30,
@@ -31,9 +31,9 @@ def plot_graph(
             zorder=0,
         )
 
-    if formation is not None:
-        mean_xy = np.dot(formation["coords"], [[0, 1], [-1, 0]])
-        edge_mat = formation["edge_mat"]
+    if form_graph is not None:
+        mean_xy = np.dot(form_graph["node_xy"], [[0, 1], [-1, 0]])
+        edge_mat = form_graph["edge_mat"]
 
         plt.scatter(
             mean_xy[:, 0],

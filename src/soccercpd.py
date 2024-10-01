@@ -57,11 +57,11 @@ class SoccerCPD:
         for i in form_periods.index[1:]:
             cur_form_period = form_periods.loc[i]
             cost_mat = distance_matrix(
-                base_form_period["coords"],
-                cur_form_period["coords"],
+                base_form_period["node_xy"],
+                cur_form_period["node_xy"],
             )
             _, perm = linear_sum_assignment(cost_mat)
-            form_periods.at[i, "coords"] = cur_form_period["coords"][perm]
+            form_periods.at[i, "node_xy"] = cur_form_period["node_xy"][perm]
             form_periods.at[i, "edge_mat"] = cur_form_period["edge_mat"][perm][:, perm]
 
             inverse_perm = dict(zip(np.array(perm) + 1, np.arange(10) + 1))
@@ -100,9 +100,9 @@ class SoccerCPD:
         role_summary = grouped[["player_period", "base_role"]].first()
         role_summary = pd.merge(role_summary, self.role_periods[HEADER_ROLE_PERIODS[:-1]])
 
-        role_summary = pd.merge(role_summary, self.form_periods[["form_period", "coords"]])
-        role_summary["x"] = role_summary.apply(lambda x: x["coords"][x["base_role"] - 1, 0], axis=1)
-        role_summary["y"] = role_summary.apply(lambda x: x["coords"][x["base_role"] - 1, 1], axis=1)
+        role_summary = pd.merge(role_summary, self.form_periods[["form_period", "node_xy"]])
+        role_summary["x"] = role_summary.apply(lambda x: x["node_xy"][x["base_role"] - 1, 0], axis=1)
+        role_summary["y"] = role_summary.apply(lambda x: x["node_xy"][x["base_role"] - 1, 1], axis=1)
 
         # role_summary = pd.merge(role_summary, self.roster[["squad_num", "player_name"]].reset_index())
         return role_summary[HEADER_ROLE_SUMMARY[1:]].astype({"player_period": int})
@@ -216,7 +216,7 @@ class SoccerCPD:
                         "start_dt": form_start_dt,
                         "end_dt": form_end_dt,
                         "duration": (form_end_dt - form_start_dt).total_seconds(),
-                        "coords": mean_xy,
+                        "node_xy": mean_xy,
                         "edge_mat": mean_edge_mat.reshape(10, 10),
                     }
                 )
@@ -353,39 +353,39 @@ class SoccerCPD:
         assert benchmark_forms is not None or form_labels is not None
 
         role_labels = dict()
-        self.form_periods["formation"] = np.nan
+        self.form_periods["label"] = np.nan
         self.role_summary["aligned_role"] = np.nan
 
         for i in self.form_periods.index:
-            fp = self.form_periods.at[i, "form_period"]
+            form_period = self.form_periods.at[i, "form_period"]
 
             if form_labels:
-                formation = form_labels[fp]
+                form_label = form_labels[form_period]
             else:
                 benchmark_forms["dist_to_sample"] = 0
                 for j in benchmark_forms.index:
                     ref_form = self.form_periods.loc[i]
                     cur_form = benchmark_forms.loc[j]
                     benchmark_forms.at[j, "dist_to_sample"] = compute_delaunay_dists(ref_form, cur_form)
-                formation = benchmark_forms.groupby("formation")["dist_to_sample"].mean().idxmin()
+                form_label = benchmark_forms.groupby("label")["dist_to_sample"].mean().idxmin()
 
-            self.form_periods.at[i, "formation"] = formation
-            instance_xy = self.form_periods.at[i, "coords"]
+            self.form_periods.at[i, "label"] = form_label
+            instance_xy = self.form_periods.at[i, "node_xy"]
 
-            if formation == "others":
-                args = {"col_x": "x", "col_y": "y", "filter": False}
-                role_distns: pd.Series = benchmark_roles.groupby("aligned_role").apply(RoleRep.estimate_mvn, **args)
-            else:
-                group_roles = benchmark_roles[benchmark_roles["formation"] == formation]
+            if form_label in ROLE_TEMPLATE.index[:-1]:
+                group_roles = benchmark_roles[benchmark_roles["formation"] == form_label]
                 args = {"col_x": "x", "col_y": "y", "filter": False}
                 role_distns: pd.Series = group_roles.groupby("aligned_role").apply(RoleRep.estimate_mvn, **args)
+            else:
+                args = {"col_x": "x", "col_y": "y", "filter": False}
+                role_distns: pd.Series = benchmark_roles.groupby("aligned_role").apply(RoleRep.estimate_mvn, **args)
 
             cost_mat: pd.DataFrame = role_distns.apply(lambda n: pd.Series(-np.log(n.pdf(instance_xy))))
             row_idx, col_idx = linear_sum_assignment(cost_mat.values)
-            role_labels[fp] = dict(zip(col_idx + 1, cost_mat.index[row_idx].values))
+            role_labels[form_period] = dict(zip(col_idx + 1, cost_mat.index[row_idx].values))
 
-            fp_rs = self.role_summary.loc[self.role_summary["form_period"] == fp]
-            self.role_summary.loc[fp_rs.index, "aligned_role"] = fp_rs["base_role"].replace(role_labels[fp])
+            fp_rs = self.role_summary.loc[self.role_summary["form_period"] == form_period]
+            self.role_summary.loc[fp_rs.index, "aligned_role"] = fp_rs["base_role"].replace(role_labels[form_period])
 
         self.role_labels = pd.DataFrame(role_labels).T[np.arange(len(col_idx)) + 1]
 
@@ -434,27 +434,28 @@ class SoccerCPD:
         import matplotlib.pyplot as plt
         import seaborn as sns
 
-        # sns.set(font="Arial", rc={"axes.unicode_minus": False}, font_scale=1.5)
-        sns.set(font_scale=1.5)
+        # sns.set_theme(font="Arial", rc={"axes.unicode_minus": False}, font_scale=1.5)
+        sns.set_theme(font_scale=1.5)
 
         fig = plt.figure(figsize=(19.2, 10.8), dpi=100)
         gs = gridspec.GridSpec(2, 4, left=0.1, right=0.9, bottom=0.1, top=0.9, wspace=0.2, hspace=0.2)
 
-        for idx, form_period in enumerate(self.form_periods["form_period"][:4]):
+        for i, form_period in enumerate(self.form_periods["form_period"][:4]):
             fp_role_seq = self.role_seq[(self.role_seq["form_period"] == form_period) & (self.role_seq["role"].notna())]
-            fp_formation = self.form_periods.loc[idx]
-            fp_role_periods = self.role_periods[self.role_periods["form_period"] == form_period]
             fp_role_labels = role_labels.loc[form_period].to_dict() if role_labels is not None else None
+            fp_graph = self.form_periods.loc[i]
 
-            plt.subplot(gs[0, idx])
-            plot_graph(fp_role_seq, fp_formation, fp_role_labels)
+            plt.subplot(gs[0, i])
+            plot_graph(fp_role_seq, fp_role_labels, fp_graph)
 
+            fp_role_periods = self.role_periods[self.role_periods["form_period"] == form_period]
             start_rp = fp_role_periods["role_period"].min()
+
             if len(fp_role_periods) == 1:
-                plt.title(f"Role Period {start_rp}", fontsize=18)
+                plt.title(f"Role Period {start_rp}: {'-'.join(fp_graph['label'])}", fontsize=18)
             else:
                 end_rp = fp_role_periods["role_period"].max()
-                plt.title(f"Role Periods {start_rp}-{end_rp}", fontsize=18)
+                plt.title(f"Role Periods {start_rp}-{end_rp}: {'-'.join(fp_graph['label'])}", fontsize=18)
 
         ax = fig.add_subplot(gs[1, :])
         plot_timeline(self.role_seq, roster, ax)
