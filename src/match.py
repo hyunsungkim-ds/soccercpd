@@ -1,77 +1,85 @@
-import os
-from datetime import datetime, timedelta
-from typing import Tuple
-
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
-import rpy2.robjects.packages as rpackages
-
-from src.soccercpd import SoccerCPD
 
 
 class Match:
-    def __init__(self, home_id: int, away_id: int = 0) -> None:
-        self.activity_ids = {"H": home_id, "A": away_id}
-        self.traces = pd.read_csv(f"private_data/traces/{home_id}-{away_id}.csv", header=0, parse_dates=["datetime"])
-        self.roster = pd.read_csv(f"private_data/roster/{home_id}-{away_id}.csv", header=0).set_index("player_code")
-        self.roster.index.name = "player_id"
+    def __init__(self, data: pd.DataFrame, roles: pd.DataFrame):
+        self.data = data
+        self.roles = roles
+        self.stats = None
 
-        self.team_traces = dict()
-        self.player_periods = dict()
-        self.team_cpd = dict()
+        defenders = ["LCB", "CB", "RCB", "LB", "RB", "LWB", "RWB"]
+        midfields = ["LDM", "CDM", "RDM", "LCM", "RCM", "CAM", "LM", "RM"]
+        forwards = ["LCF", "CF", "RCF"]
+        self.role_order = defenders + midfields + forwards
 
-    # optionally rotate the pitch so that each team always attack from left to right
-    def rotate_pitch(self, pitch_size: Tuple = (104, 68)):
-        for s in self.traces["session"].unique():
-            s_traces = self.traces[self.traces["session"] == s]
+    @staticmethod
+    def _aggregate(player_data: pd.DataFrame, td=0.1, hsr_speed=20, hsr_time=0.5) -> pd.Series:
+        duration = len(player_data.dropna(subset=["x"])) * td
+        distance = player_data["speed"].sum() / 3.6 * td
+        hsr_data = player_data[player_data["speed"] >= hsr_speed].copy()
 
-            home_xy_cols = [f"{p}_{x}" for p in self.roster.index for x in ["x", "y"] if p[0] == "H"]
-            away_xy_cols = [f"{p}_{x}" for p in self.roster.index for x in ["x", "y"] if p[0] == "A"]
-            home_mean_x = s_traces[home_xy_cols[0::2]].mean().mean()
-            away_mean_x = s_traces[away_xy_cols[0::2]].mean().mean()
+        if hsr_data.empty:
+            return pd.Series([duration, distance, 0, 0])
 
-            if home_mean_x < away_mean_x:
-                self.traces.loc[s_traces.index, away_xy_cols[0::2]] = pitch_size[0] - s_traces[away_xy_cols[0::2]]
-                self.traces.loc[s_traces.index, away_xy_cols[1::2]] = pitch_size[1] - s_traces[away_xy_cols[1::2]]
-            else:
-                self.traces.loc[s_traces.index, home_xy_cols[0::2]] = pitch_size[0] - s_traces[home_xy_cols[0::2]]
-                self.traces.loc[s_traces.index, home_xy_cols[1::2]] = pitch_size[1] - s_traces[home_xy_cols[1::2]]
+        else:
+            hsr_tds = hsr_data.reset_index()["datetime"].diff().apply(lambda x: x.total_seconds())
+            hsr_ids = (hsr_tds >= 0.5).astype(int).cumsum()
+            hsr_ids.index = hsr_data.index
 
-    def construct_team_traces(self):
-        for team in ["H", "A"]:
-            team_players = [c[:3] for c in self.traces.columns if c[0] == team and c.endswith("_x")]
-            pp_col = "home_phase" if team == "H" else "away_phase"
+            time_counts = hsr_ids.value_counts(sort=False)
+            valid_hsr_ids = hsr_ids[hsr_ids.isin(time_counts[time_counts * td >= hsr_time].index)]
+            hsr_count = len(valid_hsr_ids.unique())
+            hsr_dist = hsr_data.loc[valid_hsr_ids.index, "speed"].sum() / 3.6 * td
 
-            for pp in self.traces[pp_col].unique():
-                xy_cols = [f"{p}_{x}" for p in team_players for x in ["x", "y", "speed"]]
-                pp_x = self.traces.loc[self.traces[pp_col] == pp, xy_cols[::3]].dropna(axis=1)
+            return pd.Series([duration, distance, hsr_count, hsr_dist])
 
-                if len(pp_x.columns) > 10:  # if the goalkeeper was measured
-                    gk = pp_x.mean().idxmin()[:3]
-                    team_players.remove(gk)
+    def aggregate(self, sort_by_role=True):
+        summary = self.data.groupby(["player_id", "role_period"], as_index=False).apply(Match._aggregate).astype(int)
+        summary.columns = ["player_id", "role_period", "duration", "distance", "hsr_count", "hsr_dist"]
+        summary = pd.merge(self.roles[["player_id", "role_period", "aligned_role"]], summary)
 
-                time_cols = ["datetime", "session", "time", pp_col]
-                self.team_traces[team] = self.traces[time_cols + xy_cols].rename(columns={pp_col: "player_period"})
+        if sort_by_role:
+            summary["role_rank"] = 0
+            for i in summary.index:
+                player_id = summary.at[i, "player_id"]
+                starting_role = summary[summary["player_id"] == player_id].iloc[0]["aligned_role"]
+                summary.at[i, "role_rank"] = self.role_order.index(starting_role)
+            self.stats = summary.sort_values(["role_rank", "role_period"], ignore_index=True)
 
-                grouped = self.team_traces[team].groupby("player_period")
-                sessions = grouped["session"].first()
-                start_dts = (grouped["datetime"].first() - timedelta(seconds=0.1)).rename("start_dt")
-                end_dts = grouped["datetime"].last().rename("end_dt")
-                self.player_periods[team] = pd.concat([sessions, start_dts, end_dts], axis=1)
+        else:
+            self.stats = summary.sort_values(["player_id", "role_period"], ignore_index=True)
 
-    def run_soccercpd(self, team="H", use_precomputed=False, save=True) -> SoccerCPD:
-        # install and import the R package 'gSeg' to be used in SoccerCPD
-        utils = rpackages.importr("utils")
-        utils.chooseCRANmirror(ind=1)
-        if not rpackages.isinstalled("gSeg"):
-            utils.install_packages("gSeg")
-        rpackages.importr("gSeg")
+    def plot(self, metric="distance"):
+        plt.rcParams.update({"font.size": 12})
+        _, ax = plt.subplots(figsize=(10, 7))
+        cmap = plt.get_cmap("tab10")
 
-        # run SoccerCPD
-        team_roster = self.roster[self.roster.index.str.startswith(team)].copy()
-        cpd = SoccerCPD(self.activity_ids[team], team_roster, self.team_traces[team])
-        cpd.run(use_precomputed)
-        if save:
-            cpd.save_stats()
+        role_labels = self.roles.pivot_table("aligned_role", "role_period", "base_role", "first")
+        player_ids = self.stats["player_id"].unique()
+        player_index = 0
 
-        self.team_cpd[team] = cpd
-        return cpd
+        for player_id in player_ids:
+            player_stats = self.stats[self.stats["player_id"] == player_id]
+            player_index += 1
+            bottom = 0
+
+            for role_period in player_stats["role_period"]:
+                rp_stats = player_stats[player_stats["role_period"] == role_period].iloc[0]
+                role = rp_stats["aligned_role"]
+                value = rp_stats[metric]
+
+                rp_role_labels = role_labels.loc[role_period]
+                color_index = rp_role_labels[rp_role_labels == role].index[0] - 1
+                text = f"{role_period}-{role}\n{value}"
+
+                ax.bar(player_index, value, bottom=bottom, color=cmap(color_index), label=role)
+                ax.text(player_index, bottom + value / 2, text, ha="center", va="center", color="k")
+                if bottom > 0:
+                    ax.hlines(bottom, xmin=player_index - 0.4, xmax=player_index + 0.4, color="k", linestyle="--")
+
+                bottom += value
+
+        ax.set_xticks(np.arange(len(player_ids)) + 1, player_ids)
+        plt.show()

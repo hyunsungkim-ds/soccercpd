@@ -89,7 +89,7 @@ def plot_timeline(role_seq: pd.DataFrame, roster: pd.DataFrame = None, ax: Axes 
         player_dict = {i: f"Player {i}" for i in roles_reshaped.columns}
     else:
         roster["player_label"] = roster.apply(lambda x: f"{x['player_name']} ({x['squad_num']})", axis=1)
-        player_dict = roster["player_label"].to_dict()
+        player_dict = roster.set_index("squad_num")["player_label"].to_dict()
 
     times = role_seq[["datetime", "session", "time"]].drop_duplicates().sort_values("datetime")
     roles_reshaped = pd.merge(times, roles_reshaped.rename(columns=player_dict).reset_index())
@@ -104,7 +104,8 @@ def plot_timeline(role_seq: pd.DataFrame, roster: pd.DataFrame = None, ax: Axes 
         roles_resampled.append(session_roles_resampled)
 
     roles_resampled = pd.concat(roles_resampled)
-    players = np.sort([c for c in roles_resampled.columns if c not in ["session", "time"]])
+    # players = np.sort([c for c in roles_resampled.columns if c not in ["session", "time"]])
+    players = [c for c in roles_resampled.columns if c not in ["session", "time"]]
     sns.heatmap(roles_resampled[players].T, vmin=0.5, vmax=10.5, cmap="tab10", cbar=False)
 
     role_start_dts = role_seq.groupby("role_period")["datetime"].min()  # - timedelta(seconds=1)

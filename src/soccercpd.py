@@ -310,8 +310,20 @@ class SoccerCPD:
         self.form_periods = pd.DataFrame(form_periods).set_index("form_period")
         self.role_periods = pd.DataFrame(role_periods).set_index("role_period")
 
-        # label formation and role periods to the timestamps in role_seq
+        # label formation and role periods to the timestamps of data and role_seq
         match_end_dt = self.player_periods["end_dt"].iloc[-1]
+        self.data["form_period"] = pd.cut(
+            self.data.index,
+            bins=self.form_periods["start_dt"].tolist() + [match_end_dt],
+            right=False,
+            labels=self.form_periods.index,
+        )
+        self.data["role_period"] = pd.cut(
+            self.data.index,
+            bins=self.role_periods["start_dt"].tolist() + [match_end_dt],
+            right=False,
+            labels=self.role_periods.index,
+        )
         self.role_seq["form_period"] = pd.cut(
             self.role_seq["datetime"],
             bins=self.form_periods["start_dt"].tolist() + [match_end_dt],
