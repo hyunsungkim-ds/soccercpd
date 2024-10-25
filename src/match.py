@@ -1,6 +1,10 @@
+import math
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+
+from src.utils import ints_to_range_str
 
 
 class Match:
@@ -8,6 +12,7 @@ class Match:
         self.data = data
         self.roles = roles
         self.stats = None
+        self.role_stats = None
 
         defenders = ["LCB", "CB", "RCB", "LB", "RB", "LWB", "RWB"]
         midfields = ["LDM", "CDM", "RDM", "LCM", "RCM", "CAM", "LM", "RM"]
@@ -15,7 +20,7 @@ class Match:
         self.role_order = defenders + midfields + forwards
 
     @staticmethod
-    def _aggregate(player_data: pd.DataFrame, td=0.1, hsr_speed=20, hsr_time=0.5) -> pd.Series:
+    def compute_player_stats(player_data: pd.DataFrame, td=0.1, hsr_speed=20, hsr_time=0.5) -> pd.Series:
         duration = len(player_data.dropna(subset=["x"])) * td
         distance = player_data["speed"].sum() / 3.6 * td
         hsr_data = player_data[player_data["speed"] >= hsr_speed].copy()
@@ -35,29 +40,58 @@ class Match:
 
             return pd.Series([duration, distance, hsr_count, hsr_dist])
 
-    def aggregate(self, sort_by_role=True):
-        summary = self.data.groupby(["player_id", "role_period"], as_index=False).apply(Match._aggregate).astype(int)
-        summary.columns = ["player_id", "role_period", "duration", "distance", "hsr_count", "hsr_dist"]
-        summary = pd.merge(self.roles[["player_id", "role_period", "aligned_role"]], summary)
+    def compute_stats(self, sort_by_role=True):
+        stats = self.data.groupby(["player_id", "role_period"], as_index=False).apply(Match.compute_player_stats)
+        stats.columns = ["player_id", "role_period", "duration", "distance", "hsr_count", "hsr_dist"]
+        stats["distance_90min"] = stats["distance"] / stats["duration"] * 5400
+        stats["hsr_dist_90min"] = stats["hsr_dist"] / stats["duration"] * 5400
+        stats = stats[stats["duration"] > 0].copy().astype(int)
+        stats = pd.merge(self.roles[["player_id", "role_period", "aligned_role"]], stats)
 
         if sort_by_role:
-            summary["role_rank"] = 0
-            for i in summary.index:
-                player_id = summary.at[i, "player_id"]
-                starting_role = summary[summary["player_id"] == player_id].iloc[0]["aligned_role"]
-                summary.at[i, "role_rank"] = self.role_order.index(starting_role)
-            self.stats = summary.sort_values(["role_rank", "role_period"], ignore_index=True)
-
+            stats["role_index"] = 0
+            for i in stats.index:
+                player_id = stats.at[i, "player_id"]
+                starting_role = stats[stats["player_id"] == player_id].iloc[0]["aligned_role"]
+                stats.at[i, "role_index"] = self.role_order.index(starting_role)
+            self.stats = stats.sort_values(["role_index", "player_id", "role_period"], ignore_index=True)
         else:
-            self.stats = summary.sort_values(["player_id", "role_period"], ignore_index=True)
+            self.stats = stats.sort_values(["player_id", "role_period"], ignore_index=True)
 
-    def plot(self, metric="distance"):
-        plt.rcParams.update({"font.size": 12})
-        _, ax = plt.subplots(figsize=(10, 7))
-        cmap = plt.get_cmap("tab10")
+        self.stats["color_index"] = 0
+        role_labels = self.roles.pivot_table("aligned_role", "role_period", "base_role", "first")
 
+        for i in self.stats.index:
+            role_period = self.stats.at[i, "role_period"]
+            rp_role_labels = role_labels.loc[role_period]
+            role = self.stats.at[i, "aligned_role"]
+            self.stats.at[i, "color_index"] = rp_role_labels[rp_role_labels == role].index[0] - 1
+
+    def compute_role_stats(self):
+        grouped = self.stats.groupby(["aligned_role", "player_id"])
+        role_stats = grouped[["duration", "distance"]].sum()
+        role_stats["start_period"] = grouped["role_period"].first()
+        role_stats["total_periods"] = grouped["role_period"].apply(lambda x: ints_to_range_str(x.values.tolist()))
+
+        role2index = dict(zip(self.role_order, np.arange(len(self.role_order))))
+        role2color = self.stats[["aligned_role", "color_index"]].drop_duplicates()
+
+        role_stats = role_stats[role_stats["duration"] >= 300].reset_index()
+        role_stats["distance_90min"] = (role_stats["distance"] / role_stats["duration"] * 5400).astype(int)
+        role_stats["role_index"] = role_stats["aligned_role"].map(role2index)
+
+        self.role_stats = pd.merge(role_stats, role2color)
+        self.role_stats.sort_values(["role_index", "start_period"], ignore_index=True, inplace=True)
+
+    def plot_by_player(self, metric="distance"):
         role_labels = self.roles.pivot_table("aligned_role", "role_period", "base_role", "first")
         player_ids = self.stats["player_id"].unique()
+
+        plt.rcParams.update({"font.size": 12})
+        _, ax = plt.subplots(figsize=(len(player_ids), 7))
+
+        cmap = plt.get_cmap("tab10")
+        max_value = self.stats.groupby("player_id")[metric].sum().max()
         player_index = 0
 
         for player_id in player_ids:
@@ -67,19 +101,58 @@ class Match:
 
             for role_period in player_stats["role_period"]:
                 rp_stats = player_stats[player_stats["role_period"] == role_period].iloc[0]
-                role = rp_stats["aligned_role"]
                 value = rp_stats[metric]
+                if value == 0:
+                    continue
 
                 rp_role_labels = role_labels.loc[role_period]
+                role = rp_stats["aligned_role"]
                 color_index = rp_role_labels[rp_role_labels == role].index[0] - 1
-                text = f"{role_period}-{role}\n{value}"
-
                 ax.bar(player_index, value, bottom=bottom, color=cmap(color_index), label=role)
-                ax.text(player_index, bottom + value / 2, text, ha="center", va="center", color="k")
+
+                if value > max_value / 20:
+                    text = f"{role_period}-{role}\n{value}" if value > max_value / 10 else f"{role_period}-{role}"
+                    ax.text(player_index, bottom + value / 2, text, ha="center", va="center", color="k")
+
                 if bottom > 0:
                     ax.hlines(bottom, xmin=player_index - 0.4, xmax=player_index + 0.4, color="k", linestyle="--")
 
                 bottom += value
 
+        title_dict = {"distance": "Total Distance", "hsr_dist": "HSR Distance", "hsr_count": "Number of HSRs"}
+        title = f"{title_dict[metric[:-6]]} per 90 min." if metric.endswith("_90min") else title_dict[metric]
+        ax.set_title(title, fontsize=18)
         ax.set_xticks(np.arange(len(player_ids)) + 1, player_ids)
+
+        plt.show()
+
+    def plot_by_role(self, metric="distance_90min"):
+        plt.rcParams.update({"font.size": 12})
+        _, ax = plt.subplots(figsize=(len(self.role_stats) / 2, 6))
+
+        cmap = plt.get_cmap("tab10")
+        colors = [cmap(i) for i in self.role_stats["color_index"]]
+        ax.bar(self.role_stats.index, self.role_stats[metric], color=colors)
+
+        for x in self.role_stats.index:
+            y = self.role_stats.at[x, metric] / 2
+            label = f"RP {self.role_stats.at[x, 'total_periods']}"
+            ax.text(x, y, label, ha="center", va="center", rotation=90)
+
+        counts = self.role_stats.groupby("aligned_role", sort=False)["player_id"].count()
+        role_xticks = counts.cumsum() - counts / 2 - 0.5
+
+        ax.set_xticks(self.role_stats.index, self.role_stats["player_id"])
+        for role in role_xticks.index:
+            ax.text(role_xticks[role], -1000, role, ha="center", va="center")
+
+        ymax = math.ceil(self.stats[metric].max() / 1000) * 1000
+        ax.vlines(counts.cumsum().iloc[:-1] - 0.5, -1000, ymax, colors="k", linestyles="--")
+        ax.set_xlim(-0.5, len(self.role_stats) - 0.5)
+        ax.set_ylim(0, ymax)
+
+        title_dict = {"distance": "Total Distance", "hsr_dist": "HSR Distance", "hsr_count": "Number of HSRs"}
+        title = f"{title_dict[metric[:-6]]} per 90 min." if metric.endswith("_90min") else title_dict[metric]
+        ax.set_title(title, fontsize=18)
+
         plt.show()

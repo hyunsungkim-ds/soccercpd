@@ -121,6 +121,8 @@ def plot_timeline(role_seq: pd.DataFrame, roster: pd.DataFrame = None, ax: Axes 
     ax.vlines(xticks, ymin=0, ymax=len(players), colors="k", linestyles="--")
     ax.set_xticks(xticks)
     ax.set_xticklabels(session_labels + time_labels, rotation=45)
+    ax.set_yticks(np.arange(len(players)) + 0.5)
+    ax.set_yticklabels(players)
     ax.set_xlabel("session-time")
     ax.set_ylabel("player")
 

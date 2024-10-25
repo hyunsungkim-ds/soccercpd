@@ -75,7 +75,7 @@ def most_common(player_roles: pd.DataFrame):
 
 
 def compute_delaunay_dists(form1: pd.Series, form2: pd.Series) -> float:
-    cost_mat = distance_matrix(form1["coords"], form2["coords"])
+    cost_mat = distance_matrix(form1["node_xy"], form2["node_xy"])
     _, perm = linear_sum_assignment(cost_mat)
     edge_mat1 = form1["edge_mat"]
     edge_mat2 = form2["edge_mat"][perm][:, perm]
@@ -92,6 +92,33 @@ def seconds_to_time_str(x: float) -> str:
     minutes = int(x // 60)
     seconds = int(x % 60)
     return f"{minutes:02d}:{seconds:02d}"
+
+
+def ints_to_range_str(nums: List[int]) -> str:
+    if not nums:
+        return ""
+
+    ranges = []
+    start = nums[0]
+    end = nums[0]
+
+    for i in range(1, len(nums)):
+        if nums[i] == end + 1:
+            end = nums[i]
+        else:
+            if end > start:
+                ranges.append(f"{start}-{end}")
+            else:
+                ranges.extend(map(str, range(start, end + 1)))
+            start = nums[i]
+            end = nums[i]
+
+    if end > start:
+        ranges.append(f"{start}-{end}")
+    else:
+        ranges.extend(map(str, range(start, end + 1)))
+
+    return ",".join(ranges)
 
 
 def complete_perm(perm: pd.Series, role_set: set) -> pd.Series:

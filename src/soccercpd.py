@@ -491,6 +491,9 @@ class SoccerCPD:
             plt.show()
             plt.close(fig)
 
+        sns.reset_orig()
+        return
+
     def save_stats(self, match_id: int, form_summary=True, role_summary=True, role_seq=True):
         if not os.path.exists(f"{self.target_dir}"):
             os.mkdir(f"{self.target_dir}")
