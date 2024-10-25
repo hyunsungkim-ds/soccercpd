@@ -73,8 +73,10 @@ class Kloppy:
         player_periods = []
 
         for team in ["home", "away"]:
-            self.data[f"{team}_phase"] = 0
+            if f"{team}_phase" not in self.data.columns:
+                continue
 
+            self.data[f"{team}_phase"] = 0
             team_play_records = self.play_records[self.play_records.index.str.startswith(team)]
             session_starts = self.data.groupby("period_id")["frame_id"].first().values
             chg_frames = np.sort(np.append(team_play_records["out_frame"].unique() + 1, session_starts))
@@ -100,15 +102,32 @@ class Kloppy:
         away_y_cols = fnmatch.filter(self.data.columns, "away_*_y")
         xy_cols = home_x_cols + home_y_cols + away_x_cols + away_y_cols
 
-        for i in self.data["period_id"].unique():
-            session_data = self.data[self.data["period_id"] == i]
-            home_mean_x = session_data[home_x_cols].mean().mean()
-            away_mean_x = session_data[away_x_cols].mean().mean()
-            if home_mean_x > away_mean_x:
-                self.data.loc[session_data.index, xy_cols] = -session_data[xy_cols]
+        if home_x_cols and away_x_cols:
+            for i in self.data["period_id"].unique():
+                session_data = self.data[self.data["period_id"] == i]
+                home_mean_x = session_data[home_x_cols].mean().mean()
+                away_mean_x = session_data[away_x_cols].mean().mean()
+                if home_mean_x > away_mean_x:
+                    self.data.loc[session_data.index, xy_cols] = -session_data[xy_cols]
+
+        else:
+            x_cols = home_x_cols if home_x_cols else away_x_cols
+            mean_x_list = []
+
+            for i in self.data["period_id"].unique():
+                session_data = self.data[self.data["period_id"] == i]
+                session_mean_x = session_data[x_cols].mean().mean()
+                mean_x_list.append(session_mean_x)
+
+            if np.mean(mean_x_list[0::2]) < np.mean(mean_x_list[1::2]):
+                even_session_data = self.data[self.data["period_id"] % 2 == 0]
+                self.data.loc[even_session_data.index, xy_cols] = -even_session_data[xy_cols]
+            else:
+                odd_session_data = self.data[self.data["period_id"] % 2 == 1]
+                self.data.loc[odd_session_data.index, xy_cols] = -odd_session_data[xy_cols]
 
     def convert_to_soccercpd_input(self, exclude_gks=True):
-        if "home_phase" not in self.data.columns:
+        if "home_phase" not in self.data.columns and "away_phase" not in self.data.columns:
             self.label_player_periods()
 
         time_cols = ["datetime", "period_id", "timestamp", "frame_id"]
@@ -123,7 +142,7 @@ class Kloppy:
             player_data = self.data[col_dict.keys()].copy().rename(columns=col_dict)
 
             player_data["team"] = p.split("_")[0]
-            if p.split("_")[0] == "away":
+            if "home_phase" in self.data.columns and p.split("_")[0] == "away":
                 player_data["x"] = -player_data["x"]
                 player_data["y"] = -player_data["y"]
 
