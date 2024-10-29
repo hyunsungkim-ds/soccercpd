@@ -32,8 +32,11 @@ def plot_graph(
         )
 
     if form_graph is not None:
-        mean_xy = np.dot(form_graph["node_xy"], [[0, 1], [-1, 0]])
-        edge_mat = form_graph["edge_mat"]
+        xy_idx = [c for c in form_graph.index if c[0] in ["x", "y"]]
+        mean_xy: np.ndarray = form_graph[xy_idx].dropna().astype(float)
+        valid_roles = np.array([int(c[1:]) for c in mean_xy.index[0::2]])
+        mean_xy: np.ndarray = np.dot(mean_xy.values.reshape(-1, 2), [[0, 1], [-1, 0]])
+        adj_mat: np.ndarray = form_graph["adj_mat"]
 
         plt.scatter(
             mean_xy[:, 0],
@@ -44,22 +47,22 @@ def plot_graph(
             zorder=2,
         )
 
-        for r in np.arange(10):
+        for i, r in enumerate(valid_roles):
             if show_edges:
-                for s in np.arange(10):
+                for j in np.arange(mean_xy.shape[0]):
                     plt.plot(
-                        mean_xy[[r, s], 0],
-                        mean_xy[[r, s], 1],
-                        linewidth=edge_mat[r, s] ** 2 * 5,
+                        mean_xy[[i, j], 0],
+                        mean_xy[[i, j], 1],
+                        linewidth=adj_mat[i, j] ** 2 * 5,
                         c="k",
                         zorder=1,
                     )
 
             if annotate:
-                role_label = role_labels[r + 1] if role_labels is not None else r + 1
+                role_label = role_labels[r] if role_labels is not None else r
                 plt.annotate(
                     role_label,
-                    xy=mean_xy[r],
+                    xy=mean_xy[i],
                     ha="center",
                     va="center",
                     fontsize=15,

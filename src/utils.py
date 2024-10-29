@@ -85,11 +85,16 @@ def most_common(player_roles: pd.DataFrame):
 
 
 def compute_delaunay_dists(form1: pd.Series, form2: pd.Series) -> float:
-    cost_mat = distance_matrix(form1["node_xy"], form2["node_xy"])
-    _, perm = linear_sum_assignment(cost_mat)
-    adj_mat1 = form1["edge_mat"]
-    adj_mat2 = form2["edge_mat"][perm][:, perm]
-    return np.abs(adj_mat1 - adj_mat2).sum()
+    xy_idx = [c for c in form1.index if c[0] in ["x", "y"]]
+    form1_node_xy = form1[xy_idx].dropna().astype(float).values.reshape(-1, 2)
+    form2_node_xy = form2[xy_idx].dropna().astype(float).values.reshape(-1, 2)
+
+    cost_mat = distance_matrix(form1_node_xy, form2_node_xy)
+    row_idx, col_idx = linear_sum_assignment(cost_mat)
+
+    form1_adj_mat = form1["adj_mat"][row_idx][:, row_idx]
+    form2_adj_mat = form2["adj_mat"][col_idx][:, col_idx]
+    return np.abs(form1_adj_mat - form2_adj_mat).sum()
 
 
 def compute_switch_rate(moment_role_df: pd.DataFrame) -> pd.DataFrame:

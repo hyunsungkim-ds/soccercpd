@@ -56,8 +56,10 @@ class SoccerCPD:
         for i in form_periods.index[1:]:
             cur_form_period: pd.Series = form_periods.loc[i]
             cur_node_xy = cur_form_period[xy_cols].dropna().astype(float).values.reshape(-1, 2)
+
             cost_mat = distance_matrix(base_node_xy, cur_node_xy)
             row_idx, col_idx = linear_sum_assignment(cost_mat)
+
             form_periods.at[i, "adj_mat"] = cur_form_period["adj_mat"][col_idx][:, col_idx]
             form_periods.loc[i, xy_cols] = np.nan
             for r, c in zip(row_idx, col_idx):
@@ -360,6 +362,7 @@ class SoccerCPD:
         form_labels: dict = None,
     ):
         assert benchmark_forms is not None or form_labels is not None
+        xy_cols = [c for c in self.form_periods.columns if c[0] in ["x", "y"]]
 
         role_labels = dict()
         self.form_periods["formation"] = np.nan
@@ -371,7 +374,7 @@ class SoccerCPD:
 
             if form_labels:
                 form_label = form_labels[form_period]
-            elif self.form_periods.at[i, "node_xy"].shape[0] < 10:
+            elif len(self.form_periods.loc[i, xy_cols[0::2]].dropna()) < 10:
                 form_label = "others"
             else:
                 benchmark_forms["dist_to_sample"] = 0
@@ -389,13 +392,14 @@ class SoccerCPD:
                 args = {"col_x": "x", "col_y": "y", "filter": False}
                 role_distns: pd.Series = benchmark_roles.groupby("aligned_role").apply(RoleRep.estimate_mvn, **args)
 
-            form_label = form_label if self.form_periods.at[i, "node_xy"].shape[0] == 10 else "others"
             self.form_periods.at[i, "formation"] = form_label
-            instance_xy = self.form_periods.at[i, "node_xy"]
+            instance_xy = self.form_periods.loc[i, xy_cols].dropna().astype(float)
+            valid_roles = np.array([int(c[1:]) for c in instance_xy.index[0::2]])
+            instance_xy = instance_xy.values.reshape(-1, 2)
 
             cost_mat: pd.DataFrame = role_distns.apply(lambda n: pd.Series(-np.log(n.pdf(instance_xy))))
             row_idx, col_idx = linear_sum_assignment(cost_mat.values)
-            role_labels[form_period] = dict(zip(col_idx + 1, cost_mat.index[row_idx].values))
+            role_labels[form_period] = dict(zip(valid_roles[col_idx], cost_mat.index[row_idx].values))
 
             fp_rs: pd.DataFrame = self.role_summary.loc[self.role_summary["form_period"] == form_period]
             self.role_summary.loc[fp_rs.index, "formation"] = form_label
