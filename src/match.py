@@ -1,4 +1,5 @@
 import math
+import os
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -8,7 +9,8 @@ from src.utils import ints_to_range_str
 
 
 class Match:
-    def __init__(self, data: pd.DataFrame, roles: pd.DataFrame):
+    def __init__(self, data: pd.DataFrame, roles: pd.DataFrame, id=0):
+        self.id = id
         self.data = data
         self.roles = roles
         self.stats = None
@@ -40,13 +42,14 @@ class Match:
 
             return pd.Series([duration, distance, hsr_count, hsr_dist])
 
-    def compute_stats(self, sort_by_role=True):
+    def compute_stats(self, sort_by_role=True, save=False):
         stats = self.data.groupby(["player_id", "role_period"], as_index=False).apply(Match.compute_player_stats)
         stats.columns = ["player_id", "role_period", "duration", "distance", "hsr_count", "hsr_dist"]
         stats["distance_90min"] = stats["distance"] / stats["duration"] * 5400
         stats["hsr_dist_90min"] = stats["hsr_dist"] / stats["duration"] * 5400
+
         stats = stats[stats["duration"] > 0].copy().astype(int)
-        stats = pd.merge(self.roles[["player_id", "role_period", "aligned_role"]], stats)
+        stats = pd.merge(self.roles, stats)
 
         if sort_by_role:
             stats["role_index"] = 0
@@ -67,6 +70,10 @@ class Match:
             role = self.stats.at[i, "aligned_role"]
             self.stats.at[i, "color_index"] = rp_role_labels[rp_role_labels == role].index[0] - 1
 
+        if save:
+            os.makedirs(f"results/{self.id}", exist_ok=True)
+            self.stats.drop(["role_index", "color_index"], axis=1).to_csv(f"results/{self.id}/stats.csv", index=False)
+
     def compute_role_stats(self):
         grouped = self.stats.groupby(["aligned_role", "player_id"])
         role_stats = grouped[["duration", "distance"]].sum()
@@ -83,7 +90,7 @@ class Match:
         self.role_stats = pd.merge(role_stats, role2color)
         self.role_stats.sort_values(["role_index", "start_period"], ignore_index=True, inplace=True)
 
-    def plot_by_player(self, metric="distance"):
+    def plot_by_player(self, metric="distance", save=None):
         role_labels = self.roles.pivot_table("aligned_role", "role_period", "base_role", "first")
         player_ids = self.stats["player_id"].unique()
 
@@ -124,9 +131,14 @@ class Match:
         ax.set_title(title, fontsize=18)
         ax.set_xticks(np.arange(len(player_ids)) + 1, player_ids)
 
-        plt.show()
+        if save:
+            os.makedirs(f"results/{self.id}", exist_ok=True)
+            plt.savefig(f"results/{self.id}/plot_{metric}.png", bbox_inches="tight")
 
-    def plot_by_role(self, metric="distance_90min"):
+        plt.show()
+        plt.close()
+
+    def plot_by_role(self, metric="distance_90min", save=False):
         plt.rcParams.update({"font.size": 12})
         _, ax = plt.subplots(figsize=(len(self.role_stats) / 2, 6))
 
@@ -155,4 +167,9 @@ class Match:
         title = f"{title_dict[metric[:-6]]} per 90 min." if metric.endswith("_90min") else title_dict[metric]
         ax.set_title(title, fontsize=18)
 
+        if save:
+            os.makedirs(f"results/{self.id}", exist_ok=True)
+            plt.savefig(f"results/{self.id}/plot_{metric}.png", bbox_inches="tight")
+
         plt.show()
+        plt.close()

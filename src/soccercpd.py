@@ -365,7 +365,8 @@ class SoccerCPD:
         assert benchmark_forms is not None or form_labels is not None
 
         role_labels = dict()
-        self.form_periods["label"] = np.nan
+        self.form_periods["formation"] = np.nan
+        self.role_summary["formation"] = np.nan
         self.role_summary["aligned_role"] = np.nan
 
         for i in self.form_periods.index:
@@ -381,7 +382,7 @@ class SoccerCPD:
                     benchmark_forms.at[j, "dist_to_sample"] = compute_delaunay_dists(ref_form, cur_form)
                 form_label = benchmark_forms.groupby("label")["dist_to_sample"].mean().idxmin()
 
-            self.form_periods.at[i, "label"] = form_label
+            self.form_periods.at[i, "formation"] = form_label
             instance_xy = self.form_periods.at[i, "node_xy"]
 
             if form_label in ROLE_TEMPLATE.index[:-1]:
@@ -397,6 +398,7 @@ class SoccerCPD:
             role_labels[form_period] = dict(zip(col_idx + 1, cost_mat.index[row_idx].values))
 
             fp_rs = self.role_summary.loc[self.role_summary["form_period"] == form_period]
+            self.role_summary.loc[fp_rs.index, "formation"] = form_label
             self.role_summary.loc[fp_rs.index, "aligned_role"] = fp_rs["base_role"].replace(role_labels[form_period])
 
         self.role_labels = pd.DataFrame(role_labels).T[np.arange(len(col_idx)) + 1]
@@ -494,7 +496,7 @@ class SoccerCPD:
         sns.reset_orig()
         return
 
-    def save_stats(self, match_id: int, form_summary=True, role_summary=True, role_seq=True):
+    def save_results(self, match_id: int, form_summary=True, role_summary=True, role_seq=True):
         if not os.path.exists(f"{self.target_dir}"):
             os.mkdir(f"{self.target_dir}")
 

@@ -15,6 +15,7 @@ data/gseg_avg_5min/
 data/noncpd_gseg_avg/
 data/noncpd_5min/
 data/rtemp/
+results/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
