@@ -10,6 +10,7 @@ HEADER_ROLE_SEQ = [
     "player_id",
     "session",
     "time",
+    "subsession",
     "player_period",
     "form_period",
     "role_period",

@@ -1,6 +1,6 @@
 import os
 from collections import Counter
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pprint import pprint
 
 import numpy as np
@@ -47,7 +47,7 @@ class SoccerCPD:
         self.role_summary = None
         self.role_labels = None
 
-        self.target_dir = f"{DIR_DATA}/{formcpd_method}" if apply_cpd else f"{DIR_DATA}/noncpd"
+        # self.target_dir = f"{DIR_DATA}/{formcpd_method}" if apply_cpd else f"{DIR_DATA}/noncpd"
 
     # align corresponding roles from different formation periods
     @staticmethod
@@ -56,10 +56,7 @@ class SoccerCPD:
 
         for i in form_periods.index[1:]:
             cur_form_period = form_periods.loc[i]
-            cost_mat = distance_matrix(
-                base_form_period["node_xy"],
-                cur_form_period["node_xy"],
-            )
+            cost_mat = distance_matrix(base_form_period["node_xy"], cur_form_period["node_xy"])
             _, perm = linear_sum_assignment(cost_mat)
             form_periods.at[i, "node_xy"] = cur_form_period["node_xy"][perm]
             form_periods.at[i, "edge_mat"] = cur_form_period["edge_mat"][perm][:, perm]
@@ -117,34 +114,31 @@ class SoccerCPD:
             self.reset_precomputed_role_seq()
 
         # initialize formation and role period labels by the session labels
-        self.data["form_period"] = self.data["session"]
-        self.data["role_period"] = self.data["session"]
+        self.data["subsession"] = self.data["player_period"].map(self.player_periods["subsession"].to_dict())
+        self.data["form_period"] = self.data["subsession"]
+        self.data["role_period"] = self.data["subsession"]
 
         role_list = []
         perm_list = []
 
-        for session in self.data["session"].unique():
-            print(f"\n{'-' * 25} Session {session} {'-' * 26}")
-            player_periods = self.player_periods[self.player_periods["session"] == session]
-            session_start_dt = player_periods["start_dt"].iloc[0]
-            session_end_dt = player_periods["end_dt"].iloc[-1]
-            session_data = self.data[self.data["session"] == session]
+        for i in self.player_periods["subsession"].unique():
+            player_periods: pd.DataFrame = self.player_periods[self.player_periods["subsession"] == i]
+            n_players = len(player_periods["players"].iloc[0])
 
-            grouper = session_data.dropna(subset="x").groupby("time", group_keys=False)
-            if grouper["player_id"].apply(len).max() < 10:
-                # if less than 10 players have been measured during the session, skip the process
-                print("Not enough players to estimate a formation.")
-                continue
-            else:
-                print(player_periods)
+            start_dt: datetime = player_periods["start_dt"].iloc[0]
+            end_dt: datetime = player_periods["end_dt"].iloc[-1]
+            subsession_data: pd.DataFrame = self.data[self.data["subsession"] == i]
+
+            print(f"\n{'-' * 24} Subsession {i} {'-' * 24}")
+            print(player_periods.drop(["players", "subsession"], axis=1))
 
             if precomputed_path is None or self.role_seq.empty:
                 print("\n* Step 1: Frame-by-frame role assignment using RoleRep")
-                rolerep = RoleRep(session_data)
+                rolerep = RoleRep(subsession_data)
                 session_role_seq = rolerep.run(freq="1S")
             else:
                 print("\n* Step 1: Load the pre-computed role assignment result")
-                session_role_seq = self.role_seq[self.role_seq["session"] == session]
+                session_role_seq = self.role_seq[self.role_seq["subsession"] == i]
                 print(f"Session role sequence loaded and filtered from '{precomputed_path}'.")
 
             # exclude situations such as set-pieces that are irrelevant to the team formation
@@ -154,11 +148,7 @@ class SoccerCPD:
             role_x = valid_role_seq.pivot_table("x_norm", "datetime", "role", aggfunc="first")
             role_y = valid_role_seq.pivot_table("y_norm", "datetime", "role", aggfunc="first")
             role_xy = np.dstack([role_x.dropna().values, role_y.dropna().values])
-            if role_xy.shape[1] < 10:
-                print("Not enough players to estimate a formation.")
-                continue
-            else:
-                role_list.append(session_role_seq)
+            role_list.append(session_role_seq)
 
             # generate the sequence of role-adjacency matrices
             edge_mats = []
@@ -173,7 +163,7 @@ class SoccerCPD:
 
                 # round down chg_dts to the nearest 5-second mark with an offset
                 freq_sec = float(freq[:-1])
-                offset = session_start_dt.second % freq_sec
+                offset = start_dt.second % freq_sec
                 form_chg_dts_rounded = []
                 for dt in form_chg_dts:
                     form_chg_dts_rounded.append(dt - timedelta(seconds=(dt.second - offset) % freq_sec))
@@ -182,12 +172,12 @@ class SoccerCPD:
                 pprint(form_chg_dts_rounded)
 
                 print("\n* Step 3: RoleCPD per formation period based on role permutations")
-                form_chg_dts = [session_start_dt] + form_chg_dts_rounded + [session_end_dt]
+                form_chg_dts = [start_dt] + form_chg_dts_rounded + [end_dt]
 
             else:
                 print("\n* Step 2: Compute the formation graph of the session")
                 # assume there are no formation change throughout the session
-                form_chg_dts = [session_start_dt, session_end_dt]
+                form_chg_dts = [start_dt, end_dt]
 
                 print("\n* Step 3: Find the most frequent role permutation per 5-minute segment")
 
@@ -205,19 +195,18 @@ class SoccerCPD:
 
                 mean_x = role_x[form_start_dt:form_end_dt].dropna().mean(axis=0).round(4).values
                 mean_y = role_y[form_start_dt:form_end_dt].dropna().mean(axis=0).round(4).values
-                mean_xy = np.stack([mean_x, mean_y]).T
                 mean_edge_mat = edge_mats[form_start_dt:form_end_dt].mean(axis=0).round(4).values
 
                 # recording the details of the formation period
                 form_periods.append(
                     {
-                        "session": session,
+                        "session": player_periods["session"].iloc[0],
                         "form_period": form_period,
                         "start_dt": form_start_dt,
                         "end_dt": form_end_dt,
                         "duration": (form_end_dt - form_start_dt).total_seconds(),
-                        "node_xy": mean_xy,
-                        "edge_mat": mean_edge_mat.reshape(10, 10),
+                        "node_xy": np.stack([mean_x, mean_y]).T,
+                        "edge_mat": mean_edge_mat.reshape(n_players, n_players),
                     }
                 )
 
@@ -227,7 +216,10 @@ class SoccerCPD:
                     input_perms = perms[form_start_dt:form_end_dt]
                     input_sub_dts = np.array([dt for dt in sub_dts if (dt >= form_start_dt) and (dt < form_end_dt)])
                     role_chg_dts = detect_change_times(
-                        input_perms, input_sub_dts, mode="role", method=self.rolecpd_method
+                        input_perms,
+                        input_sub_dts,
+                        mode="role",
+                        method=self.rolecpd_method,
                     )
 
                     # round down chg_dts to the nearest 5-second mark with an offset
@@ -257,7 +249,7 @@ class SoccerCPD:
                         # Recording the details of the role period
                         role_periods.append(
                             {
-                                "session": session,
+                                "session": player_periods["session"].iloc[0],
                                 "form_period": form_period,
                                 "role_period": role_period,
                                 "start_dt": role_start_dt,
@@ -284,9 +276,9 @@ class SoccerCPD:
                 if period_perms_str.empty:
                     continue
 
-                session = self.player_periods.at[i, "session"]
-                period_perms_str["session"] = session
-                period_perms_str["form_period"] = session
+                i = self.player_periods.at[i, "session"]
+                period_perms_str["session"] = i
+                period_perms_str["form_period"] = i
 
                 period_start_dt = self.player_periods.at[i, "start_dt"]
                 offset = f"{period_start_dt.minute * SCALAR_TIME + period_start_dt.second}S"
@@ -443,7 +435,7 @@ class SoccerCPD:
 
         return switches
 
-    def visualize(self, match_id: int = None, roster: pd.DataFrame = None, role_labels=None, save=False):
+    def visualize(self, roster: pd.DataFrame = None, role_labels=None, save_dir=None):
         import matplotlib.gridspec as gridspec
         import matplotlib.pyplot as plt
         import seaborn as sns
@@ -466,28 +458,20 @@ class SoccerCPD:
             start_rp = fp_role_periods["role_period"].min()
 
             if len(fp_role_periods) == 1:
-                plt.title(f"Role Period {start_rp}: {'-'.join(fp_graph['label'])}", fontsize=18)
+                plt.title(f"Role Period {start_rp}: {'-'.join(fp_graph['formation'])}", fontsize=18)
             else:
                 end_rp = fp_role_periods["role_period"].max()
-                plt.title(f"Role Periods {start_rp}-{end_rp}: {'-'.join(fp_graph['label'])}", fontsize=18)
+                plt.title(f"Role Periods {start_rp}-{end_rp}: {'-'.join(fp_graph['formation'])}", fontsize=18)
 
         ax = fig.add_subplot(gs[1, :])
         plot_timeline(self.role_seq, roster, ax)
         plt.title("Role Change Timeline", fontsize=18)
 
-        if save:
-            assert match_id is not None
-
-            report_dir = f"{self.target_dir}/viz_report"
-            report_path = f"{report_dir}/{match_id}.png"
-            if not os.path.exists(f"{self.target_dir}"):
-                os.mkdir(f"{self.target_dir}")
-            if not os.path.exists(report_dir):
-                os.mkdir(report_dir)
-
-            plt.savefig(report_path, bbox_inches="tight")
+        if save_dir is not None:
+            os.makedirs(save_dir, exist_ok=True)
+            plt.savefig(f"{save_dir}/timeline.png", bbox_inches="tight")
             plt.close(fig)
-            print(f"'{report_path}' saving done.")
+            print(f"Successfully saved in '{save_dir}/timeline.png'.")
 
         else:
             plt.show()
@@ -496,33 +480,20 @@ class SoccerCPD:
         sns.reset_orig()
         return
 
-    def save_results(self, match_id: int, form_summary=True, role_summary=True, role_seq=True):
-        if not os.path.exists(f"{self.target_dir}"):
-            os.mkdir(f"{self.target_dir}")
+    def save_results(self, target_dir, form_summary=True, role_summary=True, role_seq=True):
+        os.makedirs(target_dir, exist_ok=True)
 
         # save form_periods
         if form_summary:
-            form_summary_dir = f"{self.target_dir}/form_summary"
-            if not os.path.exists(form_summary_dir):
-                os.mkdir(form_summary_dir)
-            form_summary_path = f"{form_summary_dir}/{match_id}.pkl"
-            self.form_periods.to_pickle(form_summary_path)
-            print(f"'{form_summary_path}' saving done.")
+            self.form_periods.to_pickle(f"{target_dir}/form_summary.pkl")
+            print(f"Successfully saved in '{target_dir}/form_summary.pkl'.")
 
         # save role_summary
         if role_summary:
-            role_summary_dir = f"{self.target_dir}/role_summary"
-            if not os.path.exists(role_summary_dir):
-                os.mkdir(role_summary_dir)
-            role_summary_path = f"{role_summary_dir}/{match_id}.csv"
-            self.role_summary.to_csv(role_summary_path, index=False, encoding="utf-8-sig")
-            print(f"'{role_summary_path}' saving done.")
+            self.role_summary.to_csv(f"{target_dir}/role_summary.csv", index=False, encoding="utf-8-sig")
+            print(f"Successfully saved in '{target_dir}/role_summary.csv'.")
 
         # save role_seq
         if role_seq:
-            role_seq_dir = f"{self.target_dir}/role_seq"
-            if not os.path.exists(role_seq_dir):
-                os.mkdir(role_seq_dir)
-            role_seq_path = f"{role_seq_dir}/{match_id}.csv"
-            self.role_seq.to_csv(role_seq_path, index=False, encoding="utf-8-sig")
-            print(f"'{role_seq_path}' saving done.")
+            self.role_seq.to_csv(f"{target_dir}/role_seq.csv", index=False, encoding="utf-8-sig")
+            print(f"Successfully saved in '{target_dir}/role_seq.csv'.")

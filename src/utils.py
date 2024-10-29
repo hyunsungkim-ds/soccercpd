@@ -33,18 +33,28 @@ def reshape_traces(traces: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(xy_list).set_index("datetime")
 
 
-def aggregate_player_periods(xy: pd.DataFrame):
-    if "datetime" not in xy.columns:
-        xy = xy.reset_index().rename(columns={"index": "datetime"})
+def aggregate_player_periods(data: pd.DataFrame) -> pd.DataFrame:
+    if "datetime" not in data.columns:
+        data = data.reset_index().rename(columns={"index": "datetime"})
 
-    grouper = xy.groupby("player_period")
-    freq = round(xy["time"].iloc[1] - xy["time"].iloc[0], 3)
+    grouper = data.groupby("player_period")
+    freq = round(data["time"].iloc[1] - data["time"].iloc[0], 3)
 
     sessions = grouper["session"].first()
     start_dts = grouper["datetime"].first().rename("start_dt")
     end_dts = grouper["datetime"].last().rename("end_dt") + timedelta(seconds=freq)
+    player_periods = pd.concat([sessions, start_dts, end_dts], axis=1)
 
-    return pd.concat([sessions, start_dts, end_dts], axis=1)
+    player_periods["players"] = None
+    for i in player_periods.index:
+        pp_data: pd.DataFrame = data[data["player_period"] == i]
+        player_periods.at[i, "players"] = pp_data.groupby("player_id")["x"].first().dropna().index.tolist()
+
+    n_players = player_periods["players"].apply(len)
+    n_players = pd.concat([player_periods["session"], n_players], axis=1)
+    player_periods["subsession"] = (n_players.diff().fillna(1) != 0).any(axis=1).astype(int).cumsum()
+
+    return player_periods
 
 
 # apply Delaunay triangulation to the given player coordinates to obtain the role-adjacency matrix

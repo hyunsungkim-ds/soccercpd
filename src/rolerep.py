@@ -32,7 +32,7 @@ class RoleRep:
         for i, player_id in enumerate(xy["player_id"].unique()):
             player_xy = xy[xy["player_id"] == player_id]
             resampler = player_xy.resample(freq, closed="left", label="left")
-            player_role_seq = resampler[HEADER_ROLE_SEQ[:4]].first()
+            player_role_seq = resampler[HEADER_ROLE_SEQ[:5]].first()
             player_role_seq["x"] = resampler["x"].mean()
             player_role_seq["y"] = resampler["y"].mean()
             player_role_seq["x_norm"] = np.nan
