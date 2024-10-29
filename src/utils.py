@@ -58,12 +58,12 @@ def aggregate_player_periods(data: pd.DataFrame) -> pd.DataFrame:
 
 
 # apply Delaunay triangulation to the given player coordinates to obtain the role-adjacency matrix
-def delaunay_edge_mat(coords):
+def delaunay_adj_mat(coords):
     tri_pts = Delaunay(coords).simplices
     edges = np.concatenate((tri_pts[:, :2], tri_pts[:, 1:], tri_pts[:, ::2]), axis=0)
-    edge_mat = np.zeros((coords.shape[0], coords.shape[0]))
-    edge_mat[edges[:, 0], edges[:, 1]] = 1
-    return np.clip(edge_mat + edge_mat.T, 0, 1)
+    adj_mat = np.zeros((coords.shape[0], coords.shape[0]))
+    adj_mat[edges[:, 0], edges[:, 1]] = 1
+    return np.clip(adj_mat + adj_mat.T, 0, 1)
 
 
 # Hamming distance between two permutations of the same shape
@@ -87,9 +87,9 @@ def most_common(player_roles: pd.DataFrame):
 def compute_delaunay_dists(form1: pd.Series, form2: pd.Series) -> float:
     cost_mat = distance_matrix(form1["node_xy"], form2["node_xy"])
     _, perm = linear_sum_assignment(cost_mat)
-    edge_mat1 = form1["edge_mat"]
-    edge_mat2 = form2["edge_mat"][perm][:, perm]
-    return np.abs(edge_mat1 - edge_mat2).sum()
+    adj_mat1 = form1["edge_mat"]
+    adj_mat2 = form2["edge_mat"][perm][:, perm]
+    return np.abs(adj_mat1 - adj_mat2).sum()
 
 
 def compute_switch_rate(moment_role_df: pd.DataFrame) -> pd.DataFrame:
@@ -256,9 +256,9 @@ def detect_change_times(
     if mode == "form":
         # condition (3) for FormCPD: The respective mean role-adjacency matrices
         # from the segments before and after chg_dt are far enough from each other
-        form1_edge_mat = seq1.mean(axis=0).values
-        form2_edge_mat = seq2.mean(axis=0).values
-        if manhattan_dist(form1_edge_mat, form2_edge_mat) < min_fdist:
+        form1_adj_mat = seq1.mean(axis=0).values
+        form2_adj_mat = seq2.mean(axis=0).values
+        if manhattan_dist(form1_adj_mat, form2_adj_mat) < min_fdist:
             print("Change-point insignificant: The formation is not changed.\n")
             return []
         else:

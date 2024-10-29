@@ -28,8 +28,7 @@ HEADER_FORM_PERIODS = [
     "start_dt",
     "end_dt",
     "duration",
-    "node_xy",
-    "edge_mat",
+    "adj_mat",
 ]
 HEADER_ROLE_PERIODS = [
     "form_period",
