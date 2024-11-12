@@ -4,6 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.axes import Axes
 
 from src.utils import ints_to_range_str
 
@@ -74,31 +75,14 @@ class Match:
             os.makedirs(f"results/{self.id}", exist_ok=True)
             self.stats.drop(["role_index", "color_index"], axis=1).to_csv(f"results/{self.id}/stats.csv", index=False)
 
-    def compute_role_stats(self):
-        grouped = self.stats.groupby(["aligned_role", "player_id"])
-        role_stats = grouped[["duration", "distance"]].sum()
-        role_stats["start_period"] = grouped["role_period"].first()
-        role_stats["total_periods"] = grouped["role_period"].apply(lambda x: ints_to_range_str(x.values.tolist()))
-
-        role2index = dict(zip(self.role_order, np.arange(len(self.role_order))))
-        role2color = self.stats[["aligned_role", "color_index"]].drop_duplicates()
-
-        role_stats = role_stats[role_stats["duration"] >= 300].reset_index()
-        role_stats["distance_90min"] = (role_stats["distance"] / role_stats["duration"] * 5400).astype(int)
-        role_stats["role_index"] = role_stats["aligned_role"].map(role2index)
-
-        self.role_stats = pd.merge(role_stats, role2color)
-        self.role_stats.sort_values(["role_index", "start_period"], ignore_index=True, inplace=True)
-
-    def plot_by_player(self, metric="distance", save=None):
-        role_labels = self.roles.pivot_table("aligned_role", "role_period", "base_role", "first")
-        player_ids = self.stats["player_id"].unique()
-
-        plt.rcParams.update({"font.size": 12})
-        _, ax = plt.subplots(figsize=(len(player_ids), 7))
+    def subplot_by_player(self, ax: Axes, role_labels: pd.DataFrame = None, metric="distance"):
+        if role_labels is None:
+            role_labels = self.roles.pivot_table("aligned_role", "role_period", "base_role", "first")
 
         cmap = plt.get_cmap("tab10")
         max_value = self.stats.groupby("player_id")[metric].sum().max()
+
+        player_ids = self.stats["player_id"].unique()
         player_index = 0
 
         for player_id in player_ids:
@@ -119,7 +103,7 @@ class Match:
 
                 if value > max_value / 20:
                     text = f"{role_period}-{role}\n{value}" if value > max_value / 10 else f"{role_period}-{role}"
-                    ax.text(player_index, bottom + value / 2, text, ha="center", va="center", color="k")
+                    ax.text(player_index, bottom + value / 2, text, ha="center", va="center", color="k", fontsize=11)
 
                 if bottom > 0:
                     ax.hlines(bottom, xmin=player_index - 0.4, xmax=player_index + 0.4, color="k", linestyle="--")
@@ -131,17 +115,42 @@ class Match:
         ax.set_title(title, fontsize=18)
         ax.set_xticks(np.arange(len(player_ids)) + 1, player_ids)
 
+    def plot_by_player(self, save=None):
+        role_labels = self.roles.pivot_table("aligned_role", "role_period", "base_role", "first")
+        player_ids = self.stats["player_id"].unique()
+
+        plt.rcParams.update({"font.size": 12})
+        _, (ax1, ax2) = plt.subplots(2, 1, figsize=(len(player_ids) * 0.7, 10))
+
+        self.subplot_by_player(ax1, role_labels, "distance")
+        self.subplot_by_player(ax2, role_labels, "hsr_dist")
+
         if save:
             os.makedirs(f"results/{self.id}", exist_ok=True)
-            plt.savefig(f"results/{self.id}/plot_{metric}.png", bbox_inches="tight")
+            plt.savefig(f"results/{self.id}/plot_dist.png", bbox_inches="tight")
 
+        plt.tight_layout()
         plt.show()
         plt.close()
 
-    def plot_by_role(self, metric="distance_90min", save=False):
-        plt.rcParams.update({"font.size": 12})
-        _, ax = plt.subplots(figsize=(len(self.role_stats) / 2, 6))
+    def compute_role_stats(self):
+        grouped = self.stats.groupby(["aligned_role", "player_id"])
+        role_stats = grouped[["duration", "distance", "hsr_dist"]].sum()
+        role_stats["start_period"] = grouped["role_period"].first()
+        role_stats["total_periods"] = grouped["role_period"].apply(lambda x: ints_to_range_str(x.values.tolist()))
 
+        role2index = dict(zip(self.role_order, np.arange(len(self.role_order))))
+        role2color = self.stats[["role_period", "aligned_role", "color_index"]].drop_duplicates()
+
+        role_stats = role_stats[role_stats["duration"] >= 300].reset_index()
+        role_stats["distance_90min"] = (role_stats["distance"] / role_stats["duration"] * 5400).astype(int)
+        role_stats["hsr_dist_90min"] = (role_stats["hsr_dist"] / role_stats["duration"] * 5400).astype(int)
+        role_stats["role_index"] = role_stats["aligned_role"].map(role2index)
+
+        self.role_stats = pd.merge(role_stats, role2color.rename(columns={"role_period": "start_period"}))
+        self.role_stats.sort_values(["role_index", "start_period"], ignore_index=True, inplace=True)
+
+    def subplot_by_role(self, ax: Axes = None, metric="distance_90min"):
         cmap = plt.get_cmap("tab10")
         colors = [cmap(i) for i in self.role_stats["color_index"]]
         ax.bar(self.role_stats.index, self.role_stats[metric], color=colors)
@@ -154,11 +163,13 @@ class Match:
         counts = self.role_stats.groupby("aligned_role", sort=False)["player_id"].count()
         role_xticks = counts.cumsum() - counts / 2 - 0.5
 
+        ytick_unit = 1000 if metric.startswith("distance") else 200
+        ymax = math.ceil(self.role_stats[metric].max() / ytick_unit) * ytick_unit
+
         ax.set_xticks(self.role_stats.index, self.role_stats["player_id"])
         for role in role_xticks.index:
-            ax.text(role_xticks[role], -1000, role, ha="center", va="center")
+            ax.text(role_xticks[role], -ymax / 10, role, ha="center", va="center")
 
-        ymax = math.ceil(self.stats[metric].max() / 1000) * 1000
         ax.vlines(counts.cumsum().iloc[:-1] - 0.5, -1000, ymax, colors="k", linestyles="--")
         ax.set_xlim(-0.5, len(self.role_stats) - 0.5)
         ax.set_ylim(0, ymax)
@@ -167,9 +178,17 @@ class Match:
         title = f"{title_dict[metric[:-6]]} per 90 min." if metric.endswith("_90min") else title_dict[metric]
         ax.set_title(title, fontsize=18)
 
+    def plot_by_role(self, save=False):
+        plt.rcParams.update({"font.size": 12})
+        _, (ax1, ax2) = plt.subplots(2, 1, figsize=(len(self.role_stats) / 2, 10))
+
+        self.subplot_by_role(ax1, "distance_90min")
+        self.subplot_by_role(ax2, "hsr_dist_90min")
+
         if save:
             os.makedirs(f"results/{self.id}", exist_ok=True)
-            plt.savefig(f"results/{self.id}/plot_{metric}.png", bbox_inches="tight")
+            plt.savefig(f"results/{self.id}/plot_dist_90min.png", bbox_inches="tight")
 
+        plt.tight_layout()
         plt.show()
         plt.close()
