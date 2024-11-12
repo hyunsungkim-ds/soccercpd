@@ -30,14 +30,13 @@ pd.set_option("display.max_columns", 20)
 
 # formation and role change-point detection (main algorithm)
 class SoccerCPD:
-    def __init__(self, data: pd.DataFrame, apply_cpd=True, formcpd_method="gseg_avg", rolecpd_method="gseg_avg"):
+    def __init__(self, data: pd.DataFrame, formcpd_method="gseg_avg", rolecpd_method="gseg_avg"):
         # formcpd_methods: ["gseg_avg", "gseg_union", "kernel_linear", "kernel_rbf", "kernel_cosine", "rank"]
         # rolecpd_methods: ["gseg_avg", "gseg_union"]
 
         self.data = data.set_index("datetime") if "datetime" in data.columns else data
         self.player_periods = aggregate_player_periods(self.data)
 
-        self.apply_cpd = apply_cpd
         self.formcpd_method = formcpd_method
         self.rolecpd_method = rolecpd_method
 
@@ -132,6 +131,7 @@ class SoccerCPD:
 
             start_dt: datetime = player_periods["start_dt"].iloc[0]
             end_dt: datetime = player_periods["end_dt"].iloc[-1]
+            sub_dts = pd.to_datetime(player_periods["start_dt"].values[1:])
             subsession_data: pd.DataFrame = self.data[self.data["subsession"] == i]
 
             print(f"\n{'-' * 24} Subsession {i} {'-' * 24}")
@@ -161,9 +161,8 @@ class SoccerCPD:
                 adj_mats.append(delaunay_adj_mat(xy).reshape(-1))
             adj_mats = pd.DataFrame(np.stack(adj_mats, axis=0), index=role_x.dropna().index)
 
-            if self.apply_cpd:
+            if self.formcpd_method is not None:
                 print("\n* Step 2: FormCPD based on role-adjacency matrices")
-                sub_dts = pd.to_datetime(player_periods["start_dt"].values[1:])
                 form_chg_dts = detect_change_times(adj_mats, sub_dts, mode="form", method=self.formcpd_method)
 
                 # round down chg_dts to the nearest 5-second mark with an offset
@@ -218,7 +217,7 @@ class SoccerCPD:
 
                 form_periods.append(form_record)
 
-                if self.apply_cpd:
+                if self.rolecpd_method is not None:
                     # recursive change-point detection for the permutation sequence
                     print(f"\nRoleCPD for the formation period {form_period}:")
                     input_perms = perms[form_start_dt:form_end_dt]
@@ -272,7 +271,7 @@ class SoccerCPD:
         else:
             return
 
-        if not self.apply_cpd:
+        if self.rolecpd_method is None:
             # finding the most frequent role permutation per 5-minute segment
             perms_str = pd.concat(perm_list)
             bins = self.player_periods["start_dt"].tolist()[1:] + [self.player_periods["end_dt"].iloc[0]]
@@ -392,7 +391,6 @@ class SoccerCPD:
                 args = {"col_x": "x", "col_y": "y", "filter": False}
                 role_distns: pd.Series = benchmark_roles.groupby("aligned_role").apply(RoleRep.estimate_mvn, **args)
 
-            self.form_periods.at[i, "formation"] = form_label
             instance_xy = self.form_periods.loc[i, xy_cols].dropna().astype(float)
             valid_roles = np.array([int(c[1:]) for c in instance_xy.index[0::2]])
             instance_xy = instance_xy.values.reshape(-1, 2)
@@ -402,6 +400,10 @@ class SoccerCPD:
             role_labels[form_period] = dict(zip(valid_roles[col_idx], cost_mat.index[row_idx].values))
 
             fp_rs: pd.DataFrame = self.role_summary.loc[self.role_summary["form_period"] == form_period]
+            if len(self.form_periods.loc[i, xy_cols[0::2]].dropna()) < 10:
+                form_label = "others"
+
+            self.form_periods.at[i, "formation"] = form_label
             self.role_summary.loc[fp_rs.index, "formation"] = form_label
             self.role_summary.loc[fp_rs.index, "aligned_role"] = fp_rs["base_role"].replace(role_labels[form_period])
 
