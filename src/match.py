@@ -50,7 +50,7 @@ class Match:
         stats["hsr_dist_90min"] = stats["hsr_dist"] / stats["duration"] * 5400
 
         stats = stats[stats["duration"] > 0].copy().astype(int)
-        stats = pd.merge(self.roles, stats)
+        stats = pd.merge(self.roles.drop("duration", axis=1), stats)
 
         if sort_by_role:
             stats["role_index"] = 0
@@ -157,8 +157,9 @@ class Match:
 
         for x in self.role_stats.index:
             y = self.role_stats.at[x, metric] / 2
-            label = f"RP {self.role_stats.at[x, 'total_periods']}"
-            ax.text(x, y, label, ha="center", va="center", rotation=90)
+            if y > 0:
+                label = f"RP {self.role_stats.at[x, 'total_periods']}"
+                ax.text(x, y, label, ha="center", va="center", rotation=90)
 
         counts = self.role_stats.groupby("aligned_role", sort=False)["player_id"].count()
         role_xticks = counts.cumsum() - counts / 2 - 0.5
