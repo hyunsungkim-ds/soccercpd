@@ -448,12 +448,16 @@ class SoccerCPD:
         return switches
 
     def visualize(self, roster: pd.DataFrame = None, role_labels: pd.DataFrame = None, save_dir=None):
+        import matplotlib.font_manager as fm
         import matplotlib.gridspec as gridspec
         import matplotlib.pyplot as plt
         import seaborn as sns
 
-        # sns.set_theme(font="Arial", rc={"axes.unicode_minus": False}, font_scale=1.5)
-        sns.set_theme(font_scale=1.5)
+        # This is for visualizing Korean characters. If you don't need this, remove the following four lines.
+        font_path = "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Light.ttc"
+        fontprop = fm.FontProperties(fname=font_path)
+        plt.rcParams["font.family"] = fontprop.get_name()
+        sns.set_theme(font=fontprop.get_name(), font_scale=1.5)
 
         fig = plt.figure(figsize=(19.2, 10.8), dpi=100)
         gs = gridspec.GridSpec(2, 4, left=0.1, right=0.9, bottom=0.1, top=0.9, wspace=0.2, hspace=0.2)
