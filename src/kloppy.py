@@ -95,16 +95,21 @@ class Kloppy:
 
             self.player_periods = pd.DataFrame(player_periods)
 
-    def rotate_pitch(self):
+    def rotate_pitch(self, sessions_to_rotate=None):
         home_x_cols = fnmatch.filter(self.data.columns, "home_*_x")
         home_y_cols = fnmatch.filter(self.data.columns, "home_*_y")
         away_x_cols = fnmatch.filter(self.data.columns, "away_*_x")
         away_y_cols = fnmatch.filter(self.data.columns, "away_*_y")
         xy_cols = home_x_cols + home_y_cols + away_x_cols + away_y_cols
 
-        if home_x_cols and away_x_cols:
+        if sessions_to_rotate is not None:
+            for i in sessions_to_rotate:
+                session_data: pd.DataFrame = self.data[self.data["period_id"] == i]
+                self.data.loc[session_data.index, xy_cols] = -session_data[xy_cols]
+
+        elif home_x_cols and away_x_cols:
             for i in self.data["period_id"].unique():
-                session_data = self.data[self.data["period_id"] == i]
+                session_data: pd.DataFrame = self.data[self.data["period_id"] == i]
                 home_mean_x = session_data[home_x_cols].mean().mean()
                 away_mean_x = session_data[away_x_cols].mean().mean()
                 if home_mean_x > away_mean_x:
@@ -115,7 +120,7 @@ class Kloppy:
             mean_x_list = []
 
             for i in self.data["period_id"].unique():
-                session_data = self.data[self.data["period_id"] == i]
+                session_data: pd.DataFrame = self.data[self.data["period_id"] == i]
                 session_mean_x = session_data[x_cols].mean().mean()
                 mean_x_list.append(session_mean_x)
 
