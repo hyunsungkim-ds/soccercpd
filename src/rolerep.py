@@ -29,7 +29,7 @@ class RoleRep:
         xy = xy[xy["x"].notna()]
         role_seq = []
 
-        for i, player_id in enumerate(xy["player_id"].unique()):
+        for i, player_id in enumerate(np.sort(xy["player_id"].unique())):
             player_xy = xy[xy["player_id"] == player_id]
             resampler = player_xy.resample(freq, closed="left", label="left")
             player_role_seq = resampler[HEADER_ROLE_SEQ[:5]].first()
@@ -74,21 +74,21 @@ class RoleRep:
         for group in groups:
             if group == base_group:
                 continue
+
             group_role_distns = role_distns[role_distns[label_group] == group]
             cost_mat = distance_matrix(
                 group_role_distns["distn"].apply(lambda x: pd.Series(x.mean)).values,
                 base_role_distns["distn"].apply(lambda x: pd.Series(x.mean)).values,
             )
             row_idx, col_idx = linear_sum_assignment(cost_mat)
+
             role_dict = dict(zip(group_role_distns["role"].iloc[row_idx], base_role_distns["role"].iloc[col_idx]))
             role_dict[0] = 0
             role_distns.loc[role_distns[label_group] == group, "role"] = col_idx + 1
-            role_seq.loc[role_seq[label_group] == group, "role"] = role_seq.loc[
-                role_seq[label_group] == group, "role"
-            ].apply(lambda role: role_dict[role])
-            role_seq.loc[role_seq[label_group] == group, "base_role"] = role_seq.loc[
-                role_seq[label_group] == group, "base_role"
-            ].apply(lambda role: role_dict[role])
+
+            group_idx = role_seq[label_group] == group
+            role_seq.loc[group_idx, "role"] = role_seq.loc[group_idx, "role"].map(role_dict)
+            role_seq.loc[group_idx, "base_role"] = role_seq.loc[group_idx, "base_role"].map(role_dict)
 
         return role_seq, role_distns.sort_values(by=[label_group, "role"]).reset_index(drop=True)
 
