@@ -2,7 +2,7 @@ import os
 from collections import Counter
 from datetime import datetime, timedelta
 from pprint import pprint
-from typing import List
+from typing import List, Union
 
 import numpy as np
 import pandas as pd
@@ -136,9 +136,11 @@ def ints_to_range_str(nums: List[int]) -> str:
     return ",".join(ranges)
 
 
-def complete_perm(perm: pd.Series, role_set: set) -> pd.Series:
-    if perm.isnull().sum():
+def complete_perm(perm: Union[pd.Series, dict], role_set: set) -> Union[pd.Series, dict]:
+    if isinstance(perm, pd.Series) and perm.isnull().sum():
         return perm.fillna(list(role_set - set(perm.dropna()))[0])
+    elif isinstance(perm, dict) and (0 in perm.values() or np.nan in perm.values()):
+        return {k: v if v in role_set else list(role_set - set(perm.values()))[0] for k, v in perm.items()}
     else:
         return perm
 

@@ -1,5 +1,6 @@
 import os
-from collections import Counter
+from collections import Counter, defaultdict
+from copy import deepcopy
 from datetime import datetime, timedelta
 from pprint import pprint
 
@@ -46,6 +47,82 @@ class SoccerCPD:
         self.role_summary = None
         self.role_labels = None
 
+    def revise_short_role_periods(self, thres_dur: float = MIN_PERIOD_DUR, max_sr: float = MAX_SWITCH_RATE):
+        for fp in self.role_periods["form_period"].unique():
+            fp_role_periods: pd.DataFrame = self.role_periods[self.role_periods["form_period"] == fp]
+
+            if len(fp_role_periods) < 2:
+                continue
+
+            for i in fp_role_periods.index:
+                if self.role_periods.at[i, "duration"] < thres_dur:
+                    rp = self.role_periods.at[i, "role_period"] if "role_period" in self.role_periods.columns else i
+                    rp_seq = self.role_seq[self.role_seq["role_period"] == rp]
+                    valid_seq: pd.DataFrame = rp_seq[rp_seq["switch_rate"] < max_sr]
+
+                    if valid_seq.empty:
+                        continue
+
+                    base_roles: dict = deepcopy(self.role_periods.at[i, "base_roles"])
+
+                    if i - 1 in fp_role_periods.index:
+                        prev_roles = defaultdict(int, fp_role_periods.at[i - 1, "base_roles"])
+                        role_set = set(prev_roles.values())
+                    else:
+                        prev_roles = defaultdict(int)
+
+                    if i + 1 in fp_role_periods.index:
+                        next_roles = defaultdict(int, fp_role_periods.at[i + 1, "base_roles"])
+                        role_set = set(next_roles.values())
+                    else:
+                        next_roles = defaultdict(int)
+
+                    for player_id, role in base_roles.items():
+                        if role not in [prev_roles[player_id], next_roles[player_id]]:
+                            if prev_roles[player_id] == next_roles[player_id]:
+                                base_roles[player_id] = prev_roles[player_id]
+                            else:
+                                base_roles[player_id] = 0
+
+                    player_xy = valid_seq.groupby("player_id")[["x_norm", "y_norm"]].mean().astype(float)
+                    unassigned_players = np.array([k for k, v in base_roles.items() if v == 0])
+                    player_xy = player_xy.loc[unassigned_players].values
+
+                    unassigned_roles = np.array(list(role_set - set(base_roles.values())))
+                    role_xy_cols = [f"{x}{r}" for x in ["x", "y"] for r in unassigned_roles]
+                    role_xy = self.form_periods.loc[1, role_xy_cols].values.astype(float).reshape(2, -1).T
+
+                    cost_mat = distance_matrix(player_xy, role_xy)
+                    row_idx, col_idx = linear_sum_assignment(cost_mat)
+                    for j, player_id in enumerate(unassigned_players[row_idx]):
+                        base_roles[player_id] = unassigned_roles[col_idx[j]]
+
+                    self.role_periods.at[i, "base_roles"] = base_roles
+
+    def reassign_base_role(self, row: pd.Series) -> pd.Series:
+        base_roles = self.role_periods.at[row["role_period"], "base_roles"]
+        row["base_role"] = base_roles[row["player_id"]]
+        return row
+
+    # refind base roles per player period and recompute the switch rate per frame for the given role_seq
+    def reset_precomputed_role_seq(self):
+        for i in self.player_periods.index[1:]:
+            pp_role_seq: pd.DataFrame = self.role_seq[self.role_seq["player_period"] == i]
+            perms: pd.DataFrame = pp_role_seq.pivot_table("role", "datetime", "player_id", "first")
+            if perms.empty:
+                continue
+
+            # role_set = set(perms.dropna().iloc[0])
+            role_set = set(np.arange(10) + 1)
+            perms = perms.apply(complete_perm, axis=1, args=(role_set,)).astype(int)
+            perms_str = perms.apply(lambda perm: np.array2string(perm.values), axis=1)
+            base_perm_list = np.fromstring(most_common(perms_str)[1:-1], dtype="float32", sep=" ")
+            base_perm_dict = dict(zip(perms.columns, base_perm_list))
+
+            self.role_seq.loc[pp_role_seq.index, "base_role"] = pp_role_seq["player_id"].map(base_perm_dict)
+
+        self.role_seq = self.role_seq.groupby("datetime", group_keys=False).apply(compute_switch_rate)
+
     # align corresponding roles from different formation periods
     def align_formations(self):
         xy_cols = [c for c in self.form_periods.columns if c[0] in ["x", "y"]]
@@ -74,31 +151,7 @@ class SoccerCPD:
             for col in ["role", "base_role"]:
                 self.role_seq.loc[fp_role_seq.index, col] = fp_role_seq[col].apply(lambda c: inverse_perm[c])
 
-    def reassign_base_role(self, row: pd.Series):
-        base_roles = self.role_periods.at[row["role_period"], "base_roles"]
-        row["base_role"] = base_roles[row["player_id"]]
-        return row
-
-    # refind base roles per player period and recompute the switch rate per frame for the given role_seq
-    def reset_precomputed_role_seq(self):
-        for i in self.player_periods.index[1:]:
-            pp_role_seq: pd.DataFrame = self.role_seq[self.role_seq["player_period"] == i]
-            perms: pd.DataFrame = pp_role_seq.pivot_table("role", "datetime", "player_id", "first")
-            if perms.empty:
-                continue
-
-            # role_set = set(perms.dropna().iloc[0])
-            role_set = set(np.arange(10) + 1)
-            perms = perms.apply(complete_perm, axis=1, args=(role_set,)).astype(int)
-            perms_str = perms.apply(lambda perm: np.array2string(perm.values), axis=1)
-            base_perm_list = np.fromstring(most_common(perms_str)[1:-1], dtype="float32", sep=" ")
-            base_perm_dict = dict(zip(perms.columns, base_perm_list))
-
-            self.role_seq.loc[pp_role_seq.index, "base_role"] = pp_role_seq["player_id"].map(base_perm_dict)
-
-        self.role_seq = self.role_seq.groupby("datetime", group_keys=False).apply(compute_switch_rate)
-
-    def summarize_role_assignment(self) -> pd.DataFrame:
+    def summarize_role_assignments(self) -> pd.DataFrame:
         grouped = self.role_seq.groupby(["player_id", "role_period"], group_keys=False, as_index=False)
         role_summary = grouped[["player_period", "base_role"]].first()
         role_summary = pd.merge(role_summary, self.role_periods[HEADER_ROLE_PERIODS[:-1]])
@@ -110,7 +163,7 @@ class SoccerCPD:
         # role_summary = pd.merge(role_summary, self.roster[["squad_num", "player_name"]].reset_index())
         return role_summary[HEADER_ROLE_SUMMARY[1:]].astype({"player_period": int})
 
-    def run(self, precomputed_path=None, freq="5S", max_sr=MAX_SWITCH_RATE):
+    def run(self, precomputed_path=None, freq="5S", max_sr=MAX_SWITCH_RATE) -> None:
         form_periods = []
         role_periods = []
 
@@ -245,24 +298,16 @@ class SoccerCPD:
                         rp_end_dt = role_chg_dts[role_chg_idx]
                         duration = (rp_end_dt - rp_start_dt).total_seconds()
 
+                        # find the most frequent role assignment in the role period
                         player_period = valid_seq[valid_seq["datetime"] >= rp_start_dt].iloc[0]["player_period"]
-                        pp_seq = valid_seq[valid_seq["player_period"] == player_period]
-                        base_roles = pp_seq[["base_role", "player_id"]].drop_duplicates()
-                        ordered_players = base_roles.sort_values("base_role")["player_id"]
+                        pp_seq: pd.DataFrame = valid_seq[valid_seq["player_period"] == player_period]
+                        assignments = pp_seq.pivot_table("role", "datetime", "player_id", aggfunc="first")
+                        assignments_str = assignments.apply(lambda perm: np.array2string(perm.values), axis=1)
+                        counter = Counter(assignments_str[rp_start_dt:rp_end_dt])
+                        base_roles = np.fromstring(counter.most_common(1)[0][0][1:-1], dtype=int, sep=" ")
+                        base_roles = dict(zip(assignments.columns, base_roles))
 
-                        # if len(role_chg_dts) > 1 and duration < MIN_PERIOD_DUR:
-                        #     # If detected role period is not long enough,
-                        #     # then interpolate the instructed roles from adjacent periods
-                        #     base_perm_dict = None
-                        # else:
-
-                        # set the instructed roles per player by the most frequent permutation in the role period
-                        counter = Counter(perms_str[rp_start_dt:rp_end_dt])
-                        base_perm_list = np.fromstring(counter.most_common(1)[0][0][1:-1], dtype=int, sep=" ")
-                        # base_perm_dict = dict(zip(perms.columns, base_perm_list))
-                        base_roles = dict(zip(ordered_players, base_perm_list))
-
-                        # recording the details of the role period
+                        # record the details of the role period
                         role_periods.append(
                             {
                                 "session": player_periods["session"].iloc[0],
@@ -317,9 +362,6 @@ class SoccerCPD:
 
         self.form_periods = pd.DataFrame(form_periods).set_index("form_period")
         self.role_periods = pd.DataFrame(role_periods).set_index("role_period")
-        # self.role_periods["base_perm"] = (
-        #     self.role_periods.groupby("form_period").apply(lambda x: x["base_perm"].ffill().bfill()).values
-        # )
 
         # label formation and role periods to the timestamps of data and role_seq
         match_end_dt = self.player_periods["end_dt"].iloc[-1]
@@ -352,11 +394,14 @@ class SoccerCPD:
         self.role_seq = self.role_seq.apply(self.reassign_base_role, axis=1)
         self.role_seq = self.role_seq.groupby("datetime", group_keys=False).apply(compute_switch_rate)
         self.align_formations()
+        self.revise_short_role_periods()
+
+        self.role_seq = self.role_seq.apply(self.reassign_base_role, axis=1)
         self.role_seq.sort_values(by=["player_id", "datetime"], ignore_index=True, inplace=True)
 
         self.form_periods = self.form_periods.reset_index()
         self.role_periods = self.role_periods.reset_index()[HEADER_ROLE_PERIODS]
-        self.role_summary = self.summarize_role_assignment()
+        self.role_summary = self.summarize_role_assignments()
         print()
         print("-" * 73)
         print("Formation Periods:")
@@ -510,7 +555,6 @@ class SoccerCPD:
             plt.close(fig)
 
         sns.reset_orig()
-        return
 
     def save_results(self, target_dir, form_summary=True, role_summary=True, role_seq=True):
         os.makedirs(target_dir, exist_ok=True)
