@@ -31,7 +31,7 @@ pd.set_option("display.max_columns", 20)
 
 # formation and role change-point detection (main algorithm)
 class SoccerCPD:
-    def __init__(self, data: pd.DataFrame, formcpd_method="gseg_avg", rolecpd_method="gseg_avg"):
+    def __init__(self, data: pd.DataFrame, formcpd_method: str = "gseg_avg", rolecpd_method: str = "gseg_avg"):
         # formcpd_methods: ["gseg_avg", "gseg_union", "kernel_linear", "kernel_rbf", "kernel_cosine", "rank"]
         # rolecpd_methods: ["gseg_avg", "gseg_union"]
 
@@ -163,7 +163,7 @@ class SoccerCPD:
         # role_summary = pd.merge(role_summary, self.roster[["squad_num", "player_name"]].reset_index())
         return role_summary[HEADER_ROLE_SUMMARY[1:]].astype({"player_period": int})
 
-    def run(self, precomputed_path=None, freq="5S", max_sr=MAX_SWITCH_RATE) -> None:
+    def run(self, precomputed_path: str = None, freq: str = "5S", max_sr: float = MAX_SWITCH_RATE) -> None:
         form_periods = []
         role_periods = []
 
@@ -201,6 +201,8 @@ class SoccerCPD:
                 session_role_seq = self.role_seq[self.role_seq["subsession"] == i]
                 print(f"Session role sequence loaded and filtered from '{precomputed_path}'.")
 
+            role_list.append(session_role_seq)
+
             # exclude situations such as set-pieces that are irrelevant to the team formation
             valid_seq = session_role_seq[session_role_seq["switch_rate"] <= max_sr]
 
@@ -208,7 +210,6 @@ class SoccerCPD:
             role_x = valid_seq.pivot_table("x_norm", "datetime", "role", aggfunc="first")
             role_y = valid_seq.pivot_table("y_norm", "datetime", "role", aggfunc="first")
             role_xy = np.dstack([role_x.dropna().values, role_y.dropna().values])
-            role_list.append(session_role_seq)
 
             # generate the sequence of role-adjacency matrices
             adj_mats = []
@@ -301,7 +302,10 @@ class SoccerCPD:
                         # find the most frequent role assignment in the role period
                         player_period = valid_seq[valid_seq["datetime"] >= rp_start_dt].iloc[0]["player_period"]
                         pp_seq: pd.DataFrame = valid_seq[valid_seq["player_period"] == player_period]
+
                         temp_roles = pp_seq.pivot_table("role", "datetime", "player_id", aggfunc="first")
+                        role_set = set(temp_roles.dropna().iloc[0])
+                        temp_roles = temp_roles.apply(complete_perm, axis=1, args=(role_set,)).astype(int)
                         temp_roles_str = temp_roles.apply(lambda perm: np.array2string(perm.values), axis=1)
 
                         counter = Counter(temp_roles_str[rp_start_dt:rp_end_dt])
