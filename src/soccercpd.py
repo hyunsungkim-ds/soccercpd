@@ -63,45 +63,45 @@ class SoccerCPD:
                     if valid_seq.empty:
                         continue
 
-                    base_roles: dict = deepcopy(self.role_periods.at[i, "base_roles"])
+                    assignment: dict = deepcopy(self.role_periods.at[i, "assignment"])
 
                     if i - 1 in fp_role_periods.index:
-                        prev_roles = defaultdict(int, fp_role_periods.at[i - 1, "base_roles"])
+                        prev_roles = defaultdict(int, fp_role_periods.at[i - 1, "assignment"])
                         role_set = set(prev_roles.values())
                     else:
                         prev_roles = defaultdict(int)
 
                     if i + 1 in fp_role_periods.index:
-                        next_roles = defaultdict(int, fp_role_periods.at[i + 1, "base_roles"])
+                        next_roles = defaultdict(int, fp_role_periods.at[i + 1, "assignment"])
                         role_set = set(next_roles.values())
                     else:
                         next_roles = defaultdict(int)
 
-                    for player_id, role in base_roles.items():
+                    for player_id, role in assignment.items():
                         if role not in [prev_roles[player_id], next_roles[player_id]]:
                             if prev_roles[player_id] == next_roles[player_id]:
-                                base_roles[player_id] = prev_roles[player_id]
+                                assignment[player_id] = prev_roles[player_id]
                             else:
-                                base_roles[player_id] = 0
+                                assignment[player_id] = 0
 
                     player_xy = valid_seq.groupby("player_id")[["x_norm", "y_norm"]].mean().astype(float)
-                    unassigned_players = np.array([k for k, v in base_roles.items() if v == 0])
+                    unassigned_players = np.array([k for k, v in assignment.items() if v == 0])
                     player_xy = player_xy.loc[unassigned_players].values
 
-                    unassigned_roles = np.array(list(role_set - set(base_roles.values())))
+                    unassigned_roles = np.array(list(role_set - set(assignment.values())))
                     role_xy_cols = [f"{x}{r}" for x in ["x", "y"] for r in unassigned_roles]
                     role_xy = self.form_periods.loc[1, role_xy_cols].values.astype(float).reshape(2, -1).T
 
                     cost_mat = distance_matrix(player_xy, role_xy)
                     row_idx, col_idx = linear_sum_assignment(cost_mat)
                     for j, player_id in enumerate(unassigned_players[row_idx]):
-                        base_roles[player_id] = unassigned_roles[col_idx[j]]
+                        assignment[player_id] = unassigned_roles[col_idx[j]]
 
-                    self.role_periods.at[i, "base_roles"] = base_roles
+                    self.role_periods.at[i, "assignment"] = assignment
 
     def reassign_base_role(self, row: pd.Series) -> pd.Series:
-        base_roles = self.role_periods.at[row["role_period"], "base_roles"]
-        row["base_role"] = base_roles[row["player_id"]]
+        assignment = self.role_periods.at[row["role_period"], "assignment"]
+        row["base_role"] = assignment[row["player_id"]]
         return row
 
     # refind base roles per player period and recompute the switch rate per frame for the given role_seq
@@ -144,8 +144,8 @@ class SoccerCPD:
             inverse_perm = dict(zip(col_idx + 1, row_idx + 1))
             fp_role_periods = self.role_periods[self.role_periods["form_period"] == cur_form_period.name]
             for j in fp_role_periods.index:
-                base_roles: dict = fp_role_periods.at[j, "base_roles"]
-                self.role_periods.at[j, "base_roles"] = {k: inverse_perm[v] for k, v in base_roles.items()}
+                assignment: dict = fp_role_periods.at[j, "assignment"]
+                self.role_periods.at[j, "assignment"] = {k: inverse_perm[v] for k, v in assignment.items()}
 
             fp_role_seq = self.role_seq[self.role_seq["form_period"] == i]
             for col in ["role", "base_role"]:
@@ -301,11 +301,12 @@ class SoccerCPD:
                         # find the most frequent role assignment in the role period
                         player_period = valid_seq[valid_seq["datetime"] >= rp_start_dt].iloc[0]["player_period"]
                         pp_seq: pd.DataFrame = valid_seq[valid_seq["player_period"] == player_period]
-                        assignments = pp_seq.pivot_table("role", "datetime", "player_id", aggfunc="first")
-                        assignments_str = assignments.apply(lambda perm: np.array2string(perm.values), axis=1)
-                        counter = Counter(assignments_str[rp_start_dt:rp_end_dt])
-                        base_roles = np.fromstring(counter.most_common(1)[0][0][1:-1], dtype=int, sep=" ")
-                        base_roles = dict(zip(assignments.columns, base_roles))
+                        temp_roles = pp_seq.pivot_table("role", "datetime", "player_id", aggfunc="first")
+                        temp_roles_str = temp_roles.apply(lambda perm: np.array2string(perm.values), axis=1)
+
+                        counter = Counter(temp_roles_str[rp_start_dt:rp_end_dt])
+                        most_common_roles = np.fromstring(counter.most_common(1)[0][0][1:-1], dtype=int, sep=" ")
+                        assignment = dict(zip(temp_roles.columns, most_common_roles))
 
                         # record the details of the role period
                         role_periods.append(
@@ -316,7 +317,7 @@ class SoccerCPD:
                                 "start_dt": rp_start_dt,
                                 "end_dt": rp_end_dt,
                                 "duration": duration,
-                                "base_roles": base_roles,
+                                "assignment": assignment,
                             },
                         )
 
@@ -354,7 +355,7 @@ class SoccerCPD:
             role_periods.rename(columns={"datetime": "start_dt"}, inplace=True)
 
             perms_list: pd.Series = role_periods["perm"].apply(lambda x: np.fromstring(x[1:-1], dtype=int, sep=" "))
-            role_periods["base_roles"] = perms_list.apply(lambda perm: dict(zip(np.arange(10) + 1, perm)))
+            role_periods["assignment"] = perms_list.apply(lambda perm: dict(zip(np.arange(10) + 1, perm)))
             role_periods["role_period"] = role_periods.index + 1
             tds = role_periods["end_dt"] - role_periods["start_dt"]
             role_periods["duration"] = tds.apply(lambda x: x.total_seconds())

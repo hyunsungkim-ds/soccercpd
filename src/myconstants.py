@@ -37,7 +37,7 @@ HEADER_ROLE_PERIODS = [
     "start_dt",
     "end_dt",
     "duration",
-    "base_roles",
+    "assignment",
 ]
 HEADER_ROLE_ALIGNS = [
     "activity_id",

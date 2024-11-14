@@ -74,6 +74,7 @@ class Match:
         if save:
             os.makedirs(f"results/{self.id}", exist_ok=True)
             self.stats.drop(["role_index", "color_index"], axis=1).to_csv(f"results/{self.id}/stats.csv", index=False)
+            print(f"Successfully saved in 'results/{self.id}/stats.csv'.")
 
     def subplot_by_player(self, ax: Axes, role_labels: pd.DataFrame = None, metric="distance"):
         if role_labels is None:
@@ -128,6 +129,7 @@ class Match:
         if save:
             os.makedirs(f"results/{self.id}", exist_ok=True)
             plt.savefig(f"results/{self.id}/plot_dist.png", bbox_inches="tight")
+            print(f"Successfully saved in 'results/{self.id}/plot_dist.png'.")
 
         plt.tight_layout()
         plt.show()
@@ -189,6 +191,7 @@ class Match:
         if save:
             os.makedirs(f"results/{self.id}", exist_ok=True)
             plt.savefig(f"results/{self.id}/plot_dist_90min.png", bbox_inches="tight")
+            print(f"Successfully saved in 'results/{self.id}/plot_dist_90min.png'.")
 
         plt.tight_layout()
         plt.show()
