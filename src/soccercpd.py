@@ -209,6 +209,13 @@ class SoccerCPD:
             # Check whether all the 10 outfield players are measured for some periods
             role_x = valid_seq.pivot_table("x_norm", "datetime", "role", aggfunc="first")
             role_y = valid_seq.pivot_table("y_norm", "datetime", "role", aggfunc="first")
+
+            # Skip degenerate subperiods (e.g. very short possession-filtered streams) with no moment
+            # where all roles are present -- otherwise the pivots below raise.
+            if role_x.dropna().empty:
+                print(f"  (skipping subperiod {i}: no frame with all roles present)")
+                continue
+
             role_xy = np.dstack([role_x.dropna().values, role_y.dropna().values])
 
             # Generate the sequence of role-adjacency matrices
