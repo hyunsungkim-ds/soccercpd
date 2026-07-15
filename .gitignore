@@ -2,7 +2,8 @@
 private_*/
 
 # Data files
-data/kloppy/
+data/sportec
+data/kloppy
 data/ugp/
 data/roster/
 data/gseg_avg/
@@ -15,6 +16,7 @@ data/gseg_avg_5min/
 data/noncpd_gseg_avg/
 data/noncpd_5min/
 data/rtemp/
+data/matches.csv
 results/
 
 # Byte-compiled / optimized / DLL files
