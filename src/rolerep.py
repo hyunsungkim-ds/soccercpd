@@ -4,14 +4,14 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial import distance_matrix
 from scipy.stats import multivariate_normal
 
-from src.myconstants import *
+from src.config import *
 
 pd.set_option("display.width", 250)
 pd.set_option("display.max_rows", 100)
 pd.set_option("display.max_columns", 20)
 
 
-# frame-by-frame role assignment proposed by Bialkowski et al. (2014)
+# Frame-by-frame role assignment proposed by Bialkowski et al. (2014)
 class RoleRep:
     def __init__(self, xy: pd.DataFrame):
         self.xy = xy

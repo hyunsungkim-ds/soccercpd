@@ -5,7 +5,7 @@ import pandas as pd
 import datetime as dt
 from sympy.combinatorics import Permutation
 from sympy.interactive import init_printing
-from src.myconstants import *
+from src.config import *
 
 init_printing(perm_cyclic=True, pretty_print=False)
 

@@ -5,7 +5,7 @@ from scipy.optimize import linear_sum_assignment
 from scipy.spatial import distance_matrix
 from sklearn.cluster import AgglomerativeClustering
 
-from src.myconstants import *
+from src.config import *
 
 pd.set_option("display.width", 250)
 pd.set_option("display.max_rows", 100)
