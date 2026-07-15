@@ -2,7 +2,7 @@ import os
 from collections import Counter
 from datetime import datetime, timedelta
 from pprint import pprint
-from typing import List, Union
+from typing import List, Union, Optional
 
 import numpy as np
 import pandas as pd
@@ -15,9 +15,48 @@ from sklearn.metrics import pairwise_distances
 from sympy.combinatorics import Permutation
 from sympy.interactive import init_printing
 
-from src.myconstants import *
+from src.config import *
 
 init_printing(perm_cyclic=True, pretty_print=False)
+
+def player_to_team(player_id) -> Optional[str]:
+    """Return the team prefix ('home'/'away') of a player_id, or None for out_/goal_/NaN/non-str."""
+    if isinstance(player_id, str):
+        if player_id.startswith("home_"):
+            return "home"
+        if player_id.startswith("away_"):
+            return "away"
+    return None
+
+
+def seconds_to_timestamp(total_seconds: float) -> str:
+    minutes = int(total_seconds // 60)
+    seconds = total_seconds % 60
+    return f"{minutes:02d}:{int(seconds):02d}{f'{seconds % 1:.2f}'[1:]}"
+
+
+def timestamp_to_seconds(timestamp: str) -> float:
+    minutes, seconds = timestamp.split(":")
+    return float(minutes) * 60 + float(seconds)
+
+
+def series_to_seconds(series: pd.Series) -> pd.Series:
+    def _to_sec(val):
+        if isinstance(val, (int, float, np.floating)) and not np.isnan(val):
+            return float(val)
+        return timestamp_to_seconds(val)
+
+    return series.apply(_to_sec)
+
+
+def _player_sort_key(s: str):
+    team, num = s.split("_", 1)
+    return (0 if team == "home" else 1, int(num))
+
+
+def list_players(data: pd.DataFrame) -> List[str]:
+    players = [c[:-2] for c in data.columns if c[:4] in ["home", "away"] and c.endswith("_x")]
+    return sorted(players, key=_player_sort_key)
 
 
 def reshape_traces(traces: pd.DataFrame) -> pd.DataFrame:
@@ -31,6 +70,81 @@ def reshape_traces(traces: pd.DataFrame) -> pd.DataFrame:
         xy_list.append(player_xy)
 
     return pd.concat(xy_list).set_index("datetime")
+
+
+def derive_player_periods(tracking: pd.DataFrame, fps: int = 25, min_gap: int = 750) -> pd.DataFrame:
+    """Add per-team substitution-phase columns (`home_phase`/`away_phase`) to a wide tracking frame.
+
+    Canonical roster-constancy step shared by both loaders: ``SportecData.to_soccercpd_input`` and
+    ``KLeagueData.label_player_periods`` call it (it replaces the old KLeagueData.round_change_times).
+
+    A new phase begins at each session (period) start and at each substitution. Every player of a
+    team shares the same phase timeline, which becomes ``player_period`` in the SoccerCPD input.
+
+    Roster changes (each player's first/last valid frame) that fall within ``min_gap`` frames of one
+    another are snapped to a single boundary, and each player's data outside its snapped
+    presence window is set to NaN. This guarantees every phase has a *constant* roster (no 1-3s
+    micro-periods from staggered substitutions, and no phase with more than the on-pitch players),
+    which SoccerCPD relies on. Frame ranges use the ``frame_id`` column, not the DataFrame index.
+    """
+    tracking = tracking.copy()
+    players = list_players(tracking)
+    session_starts = sorted(int(f) for f in tracking.groupby("period_id")["frame_id"].first().values)
+    frame_ids = tracking["frame_id"].to_numpy()
+
+    for team in ["home", "away"]:
+        team_players = [p for p in players if p.split("_")[0] == team]
+
+        # First/last valid frame per player.
+        records = {}
+        for p in team_players:
+            valid = tracking.loc[tracking[f"{p}_x"].notna(), "frame_id"]
+            if not valid.empty:
+                records[p] = (int(valid.iloc[0]), int(valid.iloc[-1]))
+
+        # Candidate change frames: session starts (hard) + each player's in-frame and out-frame+1.
+        raw_changes = set(session_starts)
+        for in_frame, out_frame in records.values():
+            raw_changes.add(in_frame)
+            raw_changes.add(out_frame + 1)
+
+        # Snap near-simultaneous changes to a single boundary; align it to a whole second (a multiple
+        # of fps) so player_period boundaries land on the 1s grid RoleRep resamples onto -- otherwise a
+        # 1s bin straddling a substitution would contain both the outgoing and incoming player.
+        # Session starts and the final change (match end) are kept exact so rounding never orphans
+        # the trailing frames into an empty phase.
+        last_change = max(raw_changes)
+        snap = {}
+        anchor = None
+        for f in sorted(raw_changes):
+            if f in session_starts or f == last_change:
+                anchor = f
+            elif anchor is None or f - anchor >= min_gap:
+                anchor = int(round(f / fps)) * fps
+            snap[f] = anchor
+
+        boundaries = np.array(sorted(set(snap.values())))
+
+        # Assign a phase to every frame based on the snapped boundaries.
+        phase = np.zeros(len(tracking), dtype=int)
+        edges = np.append(boundaries, frame_ids.max() + 1)
+        for i in range(len(edges) - 1):
+            phase[(frame_ids >= edges[i]) & (frame_ids < edges[i + 1])] = i + 1
+        tracking[f"{team}_phase"] = phase
+
+        # Snap each player's presence window to boundaries: interpolate internal dropouts and NaN
+        # out everything outside the window, so every frame of a phase has a constant roster.
+        for p, (in_frame, out_frame) in records.items():
+            snap_in, snap_out = snap[in_frame], snap[out_frame + 1] - 1
+            player_cols = [c for c in tracking.columns if c.rsplit("_", 1)[0] == p]
+            if snap_out < snap_in:
+                tracking[player_cols] = np.nan
+                continue
+            inside = (frame_ids >= snap_in) & (frame_ids <= snap_out)
+            tracking.loc[inside, player_cols] = tracking.loc[inside, player_cols].interpolate(limit_direction="both")
+            tracking.loc[~inside, player_cols] = np.nan
+
+    return tracking
 
 
 def aggregate_player_periods(data: pd.DataFrame) -> pd.DataFrame:
