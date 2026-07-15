@@ -1,7 +1,10 @@
+fastparquet
 ipykernel
+kloppy
 matplotlib
 numpy
 pandas
+pyarrow
 rpy2
 ruptures
 scipy
