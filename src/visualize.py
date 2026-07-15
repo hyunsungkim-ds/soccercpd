@@ -111,7 +111,7 @@ def plot_timeline(role_seq: pd.DataFrame, roster: pd.DataFrame = None, ax: Axes 
     players = [c for c in roles_resampled.columns if c not in ["period_id", "timestamp"]]
     sns.heatmap(roles_resampled[players].T, vmin=0.5, vmax=10.5, cmap="tab10", cbar=False)
 
-    role_start_dts = role_seq.groupby("role_period")["datetime"].min()  # - timedelta(seconds=1)
+    role_start_dts = role_seq.groupby("role_seg")["datetime"].min()  # - timedelta(seconds=1)
     xticks = []
     for dt in role_start_dts:
         xticks.append(roles_resampled.index.get_loc(dt))

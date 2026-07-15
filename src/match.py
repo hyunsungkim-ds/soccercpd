@@ -44,8 +44,8 @@ class Match:
             return pd.Series([duration, distance, hsr_count, hsr_dist])
 
     def compute_stats(self, sort_by_role=True, save=False):
-        stats = self.data.groupby(["player_id", "role_period"], as_index=False).apply(Match.compute_player_stats)
-        stats.columns = ["player_id", "role_period", "duration", "distance", "hsr_count", "hsr_dist"]
+        stats = self.data.groupby(["player_id", "role_seg"], as_index=False).apply(Match.compute_player_stats)
+        stats.columns = ["player_id", "role_seg", "duration", "distance", "hsr_count", "hsr_dist"]
         stats["distance_90min"] = stats["distance"] / stats["duration"] * 5400
         stats["hsr_dist_90min"] = stats["hsr_dist"] / stats["duration"] * 5400
 
@@ -58,16 +58,16 @@ class Match:
                 player_id = stats.at[i, "player_id"]
                 starting_role = stats[stats["player_id"] == player_id].iloc[0]["aligned_role"]
                 stats.at[i, "role_index"] = self.role_order.index(starting_role)
-            self.stats = stats.sort_values(["role_index", "player_id", "role_period"], ignore_index=True)
+            self.stats = stats.sort_values(["role_index", "player_id", "role_seg"], ignore_index=True)
         else:
-            self.stats = stats.sort_values(["player_id", "role_period"], ignore_index=True)
+            self.stats = stats.sort_values(["player_id", "role_seg"], ignore_index=True)
 
         self.stats["color_index"] = 0
-        role_labels = self.roles.pivot_table("aligned_role", "role_period", "base_role", "first")
+        role_labels = self.roles.pivot_table("aligned_role", "role_seg", "base_role", "first")
 
         for i in self.stats.index:
-            role_period = self.stats.at[i, "role_period"]
-            rp_role_labels = role_labels.loc[role_period]
+            role_seg = self.stats.at[i, "role_seg"]
+            rp_role_labels = role_labels.loc[role_seg]
             role = self.stats.at[i, "aligned_role"]
             self.stats.at[i, "color_index"] = rp_role_labels[rp_role_labels == role].index[0] - 1
 
@@ -78,7 +78,7 @@ class Match:
 
     def subplot_by_player(self, ax: Axes, role_labels: pd.DataFrame = None, metric="distance"):
         if role_labels is None:
-            role_labels = self.roles.pivot_table("aligned_role", "role_period", "base_role", "first")
+            role_labels = self.roles.pivot_table("aligned_role", "role_seg", "base_role", "first")
 
         cmap = plt.get_cmap("tab10")
         max_value = self.stats.groupby("player_id")[metric].sum().max()
@@ -91,19 +91,19 @@ class Match:
             player_index += 1
             bottom = 0
 
-            for role_period in player_stats["role_period"]:
-                rp_stats = player_stats[player_stats["role_period"] == role_period].iloc[0]
+            for role_seg in player_stats["role_seg"]:
+                rp_stats = player_stats[player_stats["role_seg"] == role_seg].iloc[0]
                 value = rp_stats[metric]
                 if value == 0:
                     continue
 
-                rp_role_labels = role_labels.loc[role_period]
+                rp_role_labels = role_labels.loc[role_seg]
                 role = rp_stats["aligned_role"]
                 color_index = rp_role_labels[rp_role_labels == role].index[0] - 1
                 ax.bar(player_index, value, bottom=bottom, color=cmap(color_index), label=role)
 
                 if value > max_value / 20:
-                    text = f"{role_period}-{role}\n{value}" if value > max_value / 10 else f"{role_period}-{role}"
+                    text = f"{role_seg}-{role}\n{value}" if value > max_value / 10 else f"{role_seg}-{role}"
                     ax.text(player_index, bottom + value / 2, text, ha="center", va="center", color="k", fontsize=11)
 
                 if bottom > 0:
@@ -117,7 +117,7 @@ class Match:
         ax.set_xticks(np.arange(len(player_ids)) + 1, player_ids)
 
     def plot_by_player(self, save=None):
-        role_labels = self.roles.pivot_table("aligned_role", "role_period", "base_role", "first")
+        role_labels = self.roles.pivot_table("aligned_role", "role_seg", "base_role", "first")
         player_ids = self.stats["player_id"].unique()
 
         plt.rcParams.update({"font.size": 12})
@@ -138,18 +138,18 @@ class Match:
     def compute_role_stats(self):
         grouped = self.stats.groupby(["aligned_role", "player_id"])
         role_stats = grouped[["duration", "distance", "hsr_dist"]].sum()
-        role_stats["start_period"] = grouped["role_period"].first()
-        role_stats["total_periods"] = grouped["role_period"].apply(lambda x: ints_to_range_str(x.values.tolist()))
+        role_stats["start_period"] = grouped["role_seg"].first()
+        role_stats["total_periods"] = grouped["role_seg"].apply(lambda x: ints_to_range_str(x.values.tolist()))
 
         role2index = dict(zip(self.role_order, np.arange(len(self.role_order))))
-        role2color = self.stats[["role_period", "aligned_role", "color_index"]].drop_duplicates()
+        role2color = self.stats[["role_seg", "aligned_role", "color_index"]].drop_duplicates()
 
         role_stats = role_stats[role_stats["duration"] >= 300].reset_index()
         role_stats["distance_90min"] = (role_stats["distance"] / role_stats["duration"] * 5400).astype(int)
         role_stats["hsr_dist_90min"] = (role_stats["hsr_dist"] / role_stats["duration"] * 5400).astype(int)
         role_stats["role_index"] = role_stats["aligned_role"].map(role2index)
 
-        self.role_stats = pd.merge(role_stats, role2color.rename(columns={"role_period": "start_period"}))
+        self.role_stats = pd.merge(role_stats, role2color.rename(columns={"role_seg": "start_period"}))
         self.role_stats.sort_values(["role_index", "start_period"], ignore_index=True, inplace=True)
 
     def subplot_by_role(self, ax: Axes = None, metric="distance_90min"):

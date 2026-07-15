@@ -25,7 +25,7 @@ class FormManager:
         coloring_model = AgglomerativeClustering(n_clusters=10).fit(role_aligns.values)
 
         role_aligns["activity_id"] = 0
-        role_aligns["form_period"] = 0
+        role_aligns["form_seg"] = 0
 
         base_roles_repeated = np.repeat(np.arange(10)[np.newaxis, :] + 1, form_summary.shape[0], axis=0)
         role_aligns["base_role"] = base_roles_repeated.flatten()
@@ -39,7 +39,7 @@ class FormManager:
                 _, perm = linear_sum_assignment(assign_cost_mat)
                 role_aligns.loc[perm + 10 * i, "aligned_role"] = np.arange(10) + 1
                 role_aligns.loc[perm + 10 * i, "activity_id"] = form_summary.at[i, "activity_id"]
-                role_aligns.loc[perm + 10 * i, "form_period"] = form_summary.at[i, "form_period"]
+                role_aligns.loc[perm + 10 * i, "form_seg"] = form_summary.at[i, "form_seg"]
             mean_coords = role_aligns.groupby("aligned_role")[["x", "y"]].mean()
 
         mean_coords["center_dist"] = np.linalg.norm(mean_coords, axis=1)
@@ -72,10 +72,10 @@ class FormManager:
         role_aligns = pd.concat(role_aligns_list)[HEADER_ROLE_ALIGNS[:-2]]
         self.role_summary = pd.merge(
             self.role_summary[HEADER_ROLE_SUMMARY],
-            self.form_summary[["activity_id", "form_period", "formation"]],
+            self.form_summary[["activity_id", "form_seg", "formation"]],
         )
         self.role_summary = pd.merge(self.role_summary, role_aligns).sort_values(
-            ["activity_id", "role_period", "player_id"], ignore_index=True
+            ["activity_id", "role_seg", "player_id"], ignore_index=True
         )
 
     @staticmethod

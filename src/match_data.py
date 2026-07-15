@@ -7,7 +7,7 @@ import pandas as pd
 from scipy.signal import savgol_filter
 
 from src.config import PITCH_X, PITCH_Y
-from src.utils import derive_player_periods, list_players, timestamp_to_seconds
+from src.utils import derive_subperiods, list_players, timestamp_to_seconds
 
 
 class MatchData(ABC):
@@ -20,14 +20,14 @@ class MatchData(ABC):
     def to_soccercpd_input(self, exclude_gks: bool = True, carry_possession: bool = True) -> pd.DataFrame:
         """Convert the wide (kloppy) tracking frame into the long format SoccerCPD consumes.
 
-        Output columns: ``datetime, team, player_id, player_period, session, time, x, y, speed``
+        Output columns: ``datetime, team, player_id, subperiod_id, session, time, x, y, speed``
         (plus ``ball_state, ball_owning_team_id`` when ``carry_possession`` and available).
 
         Coordinates are centered on the pitch and the away team is mirrored so that both teams
         attack the +x direction. kloppy's ``STATIC_HOME_AWAY`` orientation already keeps each team's
         attacking direction consistent across halves, so no per-session rotation is needed. The
         per-frame ``datetime`` is derived from ``frame_id`` (globally monotonic) so it stays ordered
-        across the half-time break; ``player_period`` is derived from substitution phases.
+        across the half-time break; ``subperiod_id`` is derived from subperiods.
         """
         tracking = self.tracking.copy()
 
@@ -48,8 +48,8 @@ class MatchData(ABC):
         tracking[x_cols] = tracking[x_cols] - PITCH_X / 2
         tracking[y_cols] = tracking[y_cols] - PITCH_Y / 2
 
-        # Substitution phases -> player_period (adds home_phase/away_phase columns).
-        tracking = derive_player_periods(tracking, fps=int(round(self.fps)))
+        # Subperiods (adds home_sub_id/away_sub_id columns).
+        tracking = derive_subperiods(tracking, fps=int(round(self.fps)))
 
         # Goalkeepers to exclude, identified by exact object_id from the lineup when available.
         gk_object_ids = set()
@@ -77,14 +77,14 @@ class MatchData(ABC):
 
             player_data["home_away"] = team
             player_data["player_id"] = int(p.split("_")[1])
-            player_data["player_period"] = tracking[f"{team}_phase"].values
+            player_data["subperiod_id"] = tracking[f"{team}_sub_id"].values
 
             block = pd.concat(
                 [tracking[time_cols].reset_index(drop=True), player_data.reset_index(drop=True)], axis=1
             )
             data_list.append(block)
 
-        out_cols = ["datetime", "period_id", "timestamp", "player_period", "home_away", "player_id", "x", "y", "s"]
+        out_cols = ["datetime", "period_id", "timestamp", "subperiod_id", "home_away", "player_id", "x", "y", "s"]
         if carry_possession:
             out_cols += [c for c in ["ball_state", "ball_owning_team_id"] if c in tracking.columns]
 

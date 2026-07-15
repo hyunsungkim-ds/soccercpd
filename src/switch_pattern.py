@@ -52,10 +52,10 @@ if __name__ == '__main__':
     role_record['start_dt'] = pd.to_datetime(role_record['start_dt'])
     role_record['end_dt'] = pd.to_datetime(role_record['end_dt'])
     role_time_table = pd.concat([
-        role_record.pivot_table(values='session', index='role_period', aggfunc='first'),
-        role_record.pivot_table(values='start_dt', index='role_period', aggfunc='min'),
-        role_record.pivot_table(values='end_dt', index='role_period', aggfunc='max'),
-        role_record.pivot_table(values='formation', index='role_period', aggfunc='first')
+        role_record.pivot_table(values='session', index='role_seg', aggfunc='first'),
+        role_record.pivot_table(values='start_dt', index='role_seg', aggfunc='min'),
+        role_record.pivot_table(values='end_dt', index='role_seg', aggfunc='max'),
+        role_record.pivot_table(values='formation', index='role_seg', aggfunc='first')
         ], axis=1
     )
     role_time_table['session_str'] = role_time_table['session'].apply(lambda x: f"{x}{'st' if x==1 else 'nd'}")
@@ -66,7 +66,7 @@ if __name__ == '__main__':
         axis=1
     )
     role_position_table = role_record.pivot_table(
-        values='aligned_role', index='role_period', columns='base_role', aggfunc='first'
+        values='aligned_role', index='role_seg', columns='base_role', aggfunc='first'
     )
 
     for i in role_time_table.index:

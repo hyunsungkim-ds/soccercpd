@@ -10,10 +10,10 @@ HEADER_ROLE_SEQ = [
     "player_id",
     "period_id",
     "timestamp",
-    "subsession",
-    "player_period",
-    "form_period",
-    "role_period",
+    "headcount_seg",
+    "subperiod_id",
+    "form_seg",
+    "role_seg",
     "x",
     "y",
     "x_norm",
@@ -22,17 +22,17 @@ HEADER_ROLE_SEQ = [
     "base_role",
     "switch_rate",
 ]
-HEADER_FORM_PERIODS = [
-    "form_period",
+HEADER_FORM_SEGS = [
+    "form_seg",
     "period_id",
     "start_dt",
     "end_dt",
     "duration",
     "adj_mat",
 ]
-HEADER_ROLE_PERIODS = [
-    "form_period",
-    "role_period",
+HEADER_ROLE_SEGS = [
+    "form_seg",
+    "role_seg",
     "period_id",
     "start_dt",
     "end_dt",
@@ -41,7 +41,7 @@ HEADER_ROLE_PERIODS = [
 ]
 HEADER_ROLE_ALIGNS = [
     "activity_id",
-    "form_period",
+    "form_seg",
     "base_role",
     "aligned_role",
     "x",
@@ -49,9 +49,9 @@ HEADER_ROLE_ALIGNS = [
 ]
 HEADER_ROLE_SUMMARY = [
     "activity_id",
-    "player_period",
-    "form_period",
-    "role_period",
+    "subperiod_id",
+    "form_seg",
+    "role_seg",
     "period_id",
     "start_dt",
     "end_dt",
