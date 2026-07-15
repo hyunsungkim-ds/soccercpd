@@ -64,7 +64,7 @@ def reshape_traces(traces: pd.DataFrame) -> pd.DataFrame:
     players = [c[:3] for c in traces.columns if c[3:] == "_x"]
 
     for p in players:
-        cols = ["datetime", "period_id", "timestamp", "subperiod_id", f"{p}_x", f"{p}_y"]
+        cols = ["datetime", "period_id", "timestamp", "player_seg", f"{p}_x", f"{p}_y"]
         player_xy = traces[cols].copy().rename(columns={f"{p}_x": "x", f"{p}_y": "y"})
         player_xy["player_id"] = p
         xy_list.append(player_xy)
@@ -72,24 +72,21 @@ def reshape_traces(traces: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(xy_list).set_index("datetime")
 
 
-def derive_subperiods(tracking: pd.DataFrame, fps: int = 25, min_gap: int = 750) -> pd.DataFrame:
-    """Add per-team subperiod columns (`home_sub_id`/`away_sub_id`) to a wide tracking frame.
+def label_player_segs(tracking: pd.DataFrame, fps: int = 25, min_gap: int = 750) -> pd.DataFrame:
+    """Add per-team player-segment columns (`home_player_seg`/`away_player_seg`) to a wide tracking frame.
 
-    Canonical roster-constancy step shared by both loaders: ``SportecData.to_soccercpd_input`` and
-    ``KLeagueData.label_subperiods`` call it (it replaces the old KLeagueData.round_change_times).
-
-    A new subperiod begins at each period start and at each substitution. Every player of a
-    team shares the same subperiod timeline, which becomes ``subperiod_id`` in the SoccerCPD input.
+    A new player segment begins at each period start and at each substitution. Every player of a
+    team shares the same player-segment timeline, which becomes ``player_seg`` in the SoccerCPD input.
 
     Roster changes (each player's first/last valid frame) that fall within ``min_gap`` frames of one
-    another are snapped to a single boundary, and each player's data outside its snapped
-    presence window is set to NaN. This guarantees every subperiod has a *constant* roster (no 1-3s
-    micro-periods from staggered substitutions, and no subperiod with more than the on-pitch players),
+    another are snapped to a single boundary, and each player's data outside its snapped presence
+    window is set to NaN. This guarantees every player segment has a *constant* roster (no 1-3s
+    micro-segments from staggered substitutions, and no segment with more than the on-pitch players),
     which SoccerCPD relies on. Frame ranges use the ``frame_id`` column, not the DataFrame index.
     """
     tracking = tracking.copy()
     players = list_players(tracking)
-    session_starts = sorted(int(f) for f in tracking.groupby("period_id")["frame_id"].first().values)
+    period_starts = sorted(int(f) for f in tracking.groupby("period_id")["frame_id"].first().values)
     frame_ids = tracking["frame_id"].to_numpy()
 
     for team in ["home", "away"]:
@@ -102,22 +99,22 @@ def derive_subperiods(tracking: pd.DataFrame, fps: int = 25, min_gap: int = 750)
             if not valid.empty:
                 records[p] = (int(valid.iloc[0]), int(valid.iloc[-1]))
 
-        # Candidate change frames: session starts (hard) + each player's in-frame and out-frame+1.
-        raw_changes = set(session_starts)
+        # Candidate change frames: period starts (hard) + each player's in-frame and out-frame+1.
+        raw_changes = set(period_starts)
         for in_frame, out_frame in records.values():
             raw_changes.add(in_frame)
             raw_changes.add(out_frame + 1)
 
         # Snap near-simultaneous changes to a single boundary; align it to a whole second (a multiple
-        # of fps) so subperiod_id boundaries land on the 1s grid RoleRep resamples onto -- otherwise a
+        # of fps) so player_seg boundaries land on the 1s grid RoleRep resamples onto -- otherwise a
         # 1s bin straddling a substitution would contain both the outgoing and incoming player.
-        # Session starts and the final change (match end) are kept exact so rounding never orphans
-        # the trailing frames into an empty subperiod.
+        # Period starts and the final change (match end) are kept exact so rounding never orphans
+        # the trailing frames into an empty player segment.
         last_change = max(raw_changes)
         snap = {}
         anchor = None
         for f in sorted(raw_changes):
-            if f in session_starts or f == last_change:
+            if f in period_starts or f == last_change:
                 anchor = f
             elif anchor is None or f - anchor >= min_gap:
                 anchor = int(round(f / fps)) * fps
@@ -125,15 +122,15 @@ def derive_subperiods(tracking: pd.DataFrame, fps: int = 25, min_gap: int = 750)
 
         boundaries = np.array(sorted(set(snap.values())))
 
-        # Assign a subperiod to every frame based on the snapped boundaries.
-        subperiod = np.zeros(len(tracking), dtype=int)
+        # Assign a player_seg to every frame based on the snapped boundaries.
+        player_seg = np.zeros(len(tracking), dtype=int)
         edges = np.append(boundaries, frame_ids.max() + 1)
         for i in range(len(edges) - 1):
-            subperiod[(frame_ids >= edges[i]) & (frame_ids < edges[i + 1])] = i + 1
-        tracking[f"{team}_sub_id"] = subperiod
+            player_seg[(frame_ids >= edges[i]) & (frame_ids < edges[i + 1])] = i + 1
+        tracking[f"{team}_player_seg"] = player_seg
 
         # Snap each player's presence window to boundaries: interpolate internal dropouts and NaN
-        # out everything outside the window, so every frame of a subperiod has a constant roster.
+        # out everything outside the window, so every frame of a player segment has a constant roster.
         for p, (in_frame, out_frame) in records.items():
             snap_in, snap_out = snap[in_frame], snap[out_frame + 1] - 1
             player_cols = [c for c in tracking.columns if c.rsplit("_", 1)[0] == p]
@@ -147,28 +144,28 @@ def derive_subperiods(tracking: pd.DataFrame, fps: int = 25, min_gap: int = 750)
     return tracking
 
 
-def aggregate_subperiods(data: pd.DataFrame) -> pd.DataFrame:
+def aggregate_player_segs(data: pd.DataFrame) -> pd.DataFrame:
     if "datetime" not in data.columns:
         data = data.reset_index().rename(columns={"index": "datetime"})
 
-    grouper = data.groupby("subperiod_id")
+    grouper = data.groupby("player_seg")
     freq = round(data["timestamp"].iloc[1] - data["timestamp"].iloc[0], 3)
 
     periods = grouper["period_id"].first()
     start_dts = grouper["datetime"].first().rename("start_dt")
     end_dts = grouper["datetime"].last().rename("end_dt") + timedelta(seconds=freq)
-    subperiods = pd.concat([periods, start_dts, end_dts], axis=1)
+    player_segs = pd.concat([periods, start_dts, end_dts], axis=1)
 
-    subperiods["players"] = None
-    for i in subperiods.index:
-        pp_data: pd.DataFrame = data[data["subperiod_id"] == i]
-        subperiods.at[i, "players"] = pp_data.groupby("player_id")["x"].first().dropna().index.tolist()
+    player_segs["players"] = None
+    for i in player_segs.index:
+        pp_data: pd.DataFrame = data[data["player_seg"] == i]
+        player_segs.at[i, "players"] = pp_data.groupby("player_id")["x"].first().dropna().index.tolist()
 
-    n_players = subperiods["players"].apply(len)
-    n_players = pd.concat([subperiods["period_id"], n_players], axis=1)
-    subperiods["headcount_seg"] = (n_players.diff().fillna(1) != 0).any(axis=1).astype(int).cumsum()
+    n_players = player_segs["players"].apply(len)
+    n_players = pd.concat([player_segs["period_id"], n_players], axis=1)
+    player_segs["subperiod_id"] = (n_players.diff().fillna(1) != 0).any(axis=1).astype(int).cumsum()
 
-    return subperiods
+    return player_segs
 
 
 # apply Delaunay triangulation to the given player coordinates to obtain the role-adjacency matrix

@@ -12,7 +12,7 @@ class KLeagueData:
     def __init__(self, data: pd.DataFrame):
         self.data = data.copy()
         self.play_records = None
-        self.subperiods = None
+        self.player_segs = None
 
     def preprocess_times(self):
         start_dt = datetime(2024, 1, 1, 1)
@@ -25,11 +25,11 @@ class KLeagueData:
         data_list = []
 
         for i in self.data["period_id"].unique():
-            session_data = self.data[self.data["period_id"] == i].copy()
-            session_data["timestamp"] = session_data["timestamp"] - session_data["timestamp"].iloc[0]
-            session_data = session_data.resample("0.04S", on="datetime").first()
-            session_data[time_cols + data_cols] = session_data[time_cols + data_cols].interpolate(limit_area="inside")
-            data_list.append(session_data)
+            period_data = self.data[self.data["period_id"] == i].copy()
+            period_data["timestamp"] = period_data["timestamp"] - period_data["timestamp"].iloc[0]
+            period_data = period_data.resample("0.04S", on="datetime").first()
+            period_data[time_cols + data_cols] = period_data[time_cols + data_cols].interpolate(limit_area="inside")
+            data_list.append(period_data)
 
         self.data = pd.concat(data_list).astype({"period_id": int, "frame_id": int}).reset_index()
 
@@ -45,10 +45,10 @@ class KLeagueData:
         return pd.DataFrame(play_records).T
 
     @staticmethod
-    def label_subperiods(data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-        # Snap substitutions into constant-roster subperiods and interpolate dropouts. This is shared
-        # with the Sportec path via utils.derive_subperiods; here we additionally pick the
-        # goalkeeper per subperiod as the player with the most extreme mean x (min for home, max for away).
+    def label_player_segs(data: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        # Snap substitutions into constant-roster player segments and interpolate dropouts. This is
+        # shared with the Sportec path via utils.derive_player_segs; here we additionally pick the
+        # goalkeeper per player segment as the player with the most extreme mean x (min home, max away).
         fps = 25
         if "timestamp" in data.columns:
             steps = data.groupby("period_id")["timestamp"].diff()
@@ -56,31 +56,31 @@ class KLeagueData:
             if step and step > 0:
                 fps = int(round(1.0 / step))
 
-        data = utils.derive_subperiods(data, fps=fps)
+        data = utils.label_player_segs(data, fps=fps)
 
-        subperiods = []
+        player_segs = []
         for team in ["home", "away"]:
             team_x_cols = fnmatch.filter(data.columns, f"{team}_*_x")
-            for subperiod in sorted(p for p in data[f"{team}_sub_id"].unique() if p > 0):
-                subperiod_data = data.loc[data[f"{team}_sub_id"] == subperiod]
-                mean_x = subperiod_data[team_x_cols].mean()
+            for player_seg in sorted(p for p in data[f"{team}_player_seg"].unique() if p > 0):
+                player_seg_data = data.loc[data[f"{team}_player_seg"] == player_seg]
+                mean_x = player_seg_data[team_x_cols].mean()
                 if mean_x.dropna().empty:
                     continue
 
                 gk_col = mean_x.idxmin() if team == "home" else mean_x.idxmax()
-                subperiods.append(
+                player_segs.append(
                     {
                         "home_away": team,
-                        "start_frame": int(subperiod_data["frame_id"].iloc[0]),
-                        "end_frame": int(subperiod_data["frame_id"].iloc[-1]),
+                        "start_frame": int(player_seg_data["frame_id"].iloc[0]),
+                        "end_frame": int(player_seg_data["frame_id"].iloc[-1]),
                         "goalkeeper": int(gk_col.split("_")[1]),
                     }
                 )
 
-        return data, pd.DataFrame(subperiods)
+        return data, pd.DataFrame(player_segs)
 
     @staticmethod
-    def rotate_pitch(data: pd.DataFrame, sessions_to_rotate=None):
+    def rotate_pitch(data: pd.DataFrame, periods_to_rotate=None):
         data = data.copy()
 
         home_x_cols = fnmatch.filter(data.columns, "home_*_x")
@@ -89,45 +89,45 @@ class KLeagueData:
         away_y_cols = fnmatch.filter(data.columns, "away_*_y")
         xy_cols = home_x_cols + home_y_cols + away_x_cols + away_y_cols
 
-        if sessions_to_rotate is not None:
-            for i in sessions_to_rotate:
-                session_data: pd.DataFrame = data[data["period_id"] == i]
-                data.loc[session_data.index, xy_cols] = -session_data[xy_cols]
+        if periods_to_rotate is not None:
+            for i in periods_to_rotate:
+                period_data: pd.DataFrame = data[data["period_id"] == i]
+                data.loc[period_data.index, xy_cols] = -period_data[xy_cols]
 
         elif home_x_cols and away_x_cols:
             for i in data["period_id"].unique():
-                session_data: pd.DataFrame = data[data["period_id"] == i]
-                home_mean_x = session_data[home_x_cols].mean().mean()
-                away_mean_x = session_data[away_x_cols].mean().mean()
+                period_data: pd.DataFrame = data[data["period_id"] == i]
+                home_mean_x = period_data[home_x_cols].mean().mean()
+                away_mean_x = period_data[away_x_cols].mean().mean()
                 if home_mean_x > away_mean_x:
-                    data.loc[session_data.index, xy_cols] = -session_data[xy_cols]
+                    data.loc[period_data.index, xy_cols] = -period_data[xy_cols]
 
         else:
             x_cols = home_x_cols if home_x_cols else away_x_cols
             mean_x_list = []
 
             for i in data["period_id"].unique():
-                session_data: pd.DataFrame = data[data["period_id"] == i]
-                session_mean_x = session_data[x_cols].mean().mean()
-                mean_x_list.append(session_mean_x)
+                period_data: pd.DataFrame = data[data["period_id"] == i]
+                period_mean_x = period_data[x_cols].mean().mean()
+                mean_x_list.append(period_mean_x)
 
             if np.mean(mean_x_list[0::2]) < np.mean(mean_x_list[1::2]):
-                even_session_data = data[data["period_id"] % 2 == 0]
-                data.loc[even_session_data.index, xy_cols] = -even_session_data[xy_cols]
+                even_period_data = data[data["period_id"] % 2 == 0]
+                data.loc[even_period_data.index, xy_cols] = -even_period_data[xy_cols]
             else:
-                odd_session_data = data[data["period_id"] % 2 == 1]
-                data.loc[odd_session_data.index, xy_cols] = -odd_session_data[xy_cols]
+                odd_period_data = data[data["period_id"] % 2 == 1]
+                data.loc[odd_period_data.index, xy_cols] = -odd_period_data[xy_cols]
 
         return data
 
-    def convert_to_soccercpd_input(self, exclude_gks=True):
-        if "home_sub_id" not in self.data.columns and "away_sub_id" not in self.data.columns:
-            self.data, self.subperiods = KLeagueData.label_subperiods(self.data)
+    def to_soccercpd_input(self, exclude_gks=True):
+        if "home_player_seg" not in self.data.columns and "away_player_seg" not in self.data.columns:
+            self.data, self.player_segs = KLeagueData.label_player_segs(self.data)
 
         players = utils.list_players(self.data)
-        if exclude_gks and self.subperiods is None:
-            _, self.subperiods = KLeagueData.label_subperiods(self.data)
-        gks = self.subperiods["goalkeeper"].unique() if exclude_gks else []
+        if exclude_gks and self.player_segs is None:
+            _, self.player_segs = KLeagueData.label_player_segs(self.data)
+        gks = self.player_segs["goalkeeper"].unique() if exclude_gks else []
         time_cols = ["datetime", "period_id", "timestamp", "frame_id"]
         data_list = []
 
@@ -139,15 +139,15 @@ class KLeagueData:
             player_data = self.data[col_dict.keys()].copy().rename(columns=col_dict)
 
             player_data["home_away"] = p.split("_")[0]
-            if "home_sub_id" in self.data.columns and p.split("_")[0] == "away":
+            if "home_player_seg" in self.data.columns and p.split("_")[0] == "away":
                 player_data["x"] = -player_data["x"]
                 player_data["y"] = -player_data["y"]
 
             player_data["player_id"] = int(p.split("_")[1])
-            player_data["subperiod_id"] = self.data[f"{p.split('_')[0]}_sub_id"]
+            player_data["player_seg"] = self.data[f"{p.split('_')[0]}_player_seg"]
 
             data_list.append(pd.concat([self.data[time_cols], player_data], axis=1))
 
         rename_dict = {"speed": "s"}
-        cols = ["datetime", "period_id", "timestamp", "subperiod_id", "home_away", "player_id", "x", "y", "s"]
+        cols = ["datetime", "period_id", "timestamp", "player_seg", "home_away", "player_id", "x", "y", "s"]
         return pd.concat(data_list).rename(columns=rename_dict)[cols]

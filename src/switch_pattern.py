@@ -52,17 +52,17 @@ if __name__ == '__main__':
     role_record['start_dt'] = pd.to_datetime(role_record['start_dt'])
     role_record['end_dt'] = pd.to_datetime(role_record['end_dt'])
     role_time_table = pd.concat([
-        role_record.pivot_table(values='session', index='role_seg', aggfunc='first'),
+        role_record.pivot_table(values='period_id', index='role_seg', aggfunc='first'),
         role_record.pivot_table(values='start_dt', index='role_seg', aggfunc='min'),
         role_record.pivot_table(values='end_dt', index='role_seg', aggfunc='max'),
         role_record.pivot_table(values='formation', index='role_seg', aggfunc='first')
         ], axis=1
     )
-    role_time_table['session_str'] = role_time_table['session'].apply(lambda x: f"{x}{'st' if x==1 else 'nd'}")
-    half_start = role_time_table.groupby('session').apply(lambda x: x['start_dt'].min())
+    role_time_table['period_str'] = role_time_table['period_id'].apply(lambda x: f"{x}{'st' if x==1 else 'nd'}")
+    half_start = role_time_table.groupby('period_id').apply(lambda x: x['start_dt'].min())
     role_time_table['title'] = role_time_table.apply(
-        lambda x: f"{x['session_str']} Half {(x['start_dt'] - half_start[x['session']]).components[2]}'~"
-                  f"{(x['end_dt'] - half_start[x['session']]).components[2]}': {'-'.join(x['formation'])}",
+        lambda x: f"{x['period_str']} Half {(x['start_dt'] - half_start[x['period_id']]).components[2]}'~"
+                  f"{(x['end_dt'] - half_start[x['period_id']]).components[2]}': {'-'.join(x['formation'])}",
         axis=1
     )
     role_position_table = role_record.pivot_table(

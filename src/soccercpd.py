@@ -13,7 +13,7 @@ from tqdm import tqdm
 from src.config import *
 from src.rolerep import RoleRep
 from src.utils import (
-    aggregate_subperiods,
+    aggregate_player_segs,
     complete_perm,
     compute_delaunay_dists,
     compute_switch_rate,
@@ -36,7 +36,7 @@ class SoccerCPD:
         # rolecpd_methods: ["gseg_avg", "gseg_union"]
 
         self.data = data.set_index("datetime") if "datetime" in data.columns else data
-        self.subperiods = aggregate_subperiods(self.data)
+        self.player_segs = aggregate_player_segs(self.data)
 
         self.formcpd_method = formcpd_method
         self.rolecpd_method = rolecpd_method
@@ -106,8 +106,8 @@ class SoccerCPD:
 
     # Refind base roles per player period and recompute the switch rate per frame for the given role_seq
     def reset_precomputed_role_seq(self):
-        for i in self.subperiods.index[1:]:
-            pp_role_seq: pd.DataFrame = self.role_seq[self.role_seq["subperiod_id"] == i]
+        for i in self.player_segs.index[1:]:
+            pp_role_seq: pd.DataFrame = self.role_seq[self.role_seq["player_seg"] == i]
             perms: pd.DataFrame = pp_role_seq.pivot_table("role", "datetime", "player_id", "first")
             if perms.empty:
                 continue
@@ -153,7 +153,7 @@ class SoccerCPD:
 
     def summarize_role_assignments(self) -> pd.DataFrame:
         grouped = self.role_seq.groupby(["player_id", "role_seg"], group_keys=False, as_index=False)
-        role_summary = grouped[["subperiod_id", "base_role"]].first()
+        role_summary = grouped[["player_seg", "base_role"]].first()
         role_summary = pd.merge(role_summary, self.role_segs[HEADER_ROLE_SEGS[:-1]])
 
         forms = self.form_segs.set_index("form_seg")
@@ -161,7 +161,7 @@ class SoccerCPD:
         role_summary["y"] = role_summary.apply(lambda x: forms.at[x["form_seg"], f"y{x['base_role']}"], axis=1)
 
         # role_summary = pd.merge(role_summary, self.roster[["squad_num", "player_name"]].reset_index())
-        return role_summary[HEADER_ROLE_SUMMARY[1:]].astype({"subperiod_id": int})
+        return role_summary[HEADER_ROLE_SUMMARY[1:]].astype({"player_seg": int})
 
     def run(self, precomputed_path: str = None, freq: str = "5S", max_sr: float = MAX_SWITCH_RATE) -> None:
         form_segments = []
@@ -172,39 +172,39 @@ class SoccerCPD:
             self.role_seq = pd.read_csv(precomputed_path, header=0, encoding="utf-8-sig", parse_dates=["datetime"])
             self.reset_precomputed_role_seq()
 
-        # Initialize formation and role period labels by the session labels
-        self.data["headcount_seg"] = self.data["subperiod_id"].map(self.subperiods["headcount_seg"].to_dict())
-        self.data["form_seg"] = self.data["headcount_seg"]
-        self.data["role_seg"] = self.data["headcount_seg"]
+        # Initialize form and role segment labels from the subperiod labels
+        self.data["subperiod_id"] = self.data["player_seg"].map(self.player_segs["subperiod_id"].to_dict())
+        self.data["form_seg"] = self.data["subperiod_id"]
+        self.data["role_seg"] = self.data["subperiod_id"]
 
         role_list = []
         perm_list = []
 
-        for i in self.subperiods["headcount_seg"].unique():
-            subperiods: pd.DataFrame = self.subperiods[self.subperiods["headcount_seg"] == i]
-            n_players = len(subperiods["players"].iloc[0])
+        for i in self.player_segs["subperiod_id"].unique():
+            player_segs: pd.DataFrame = self.player_segs[self.player_segs["subperiod_id"] == i]
+            n_players = len(player_segs["players"].iloc[0])
 
-            start_dt: datetime = subperiods["start_dt"].iloc[0]
-            end_dt: datetime = subperiods["end_dt"].iloc[-1]
-            sub_dts = pd.to_datetime(subperiods["start_dt"].values[1:])
-            headcount_seg_data: pd.DataFrame = self.data[self.data["headcount_seg"] == i]
+            start_dt: datetime = player_segs["start_dt"].iloc[0]
+            end_dt: datetime = player_segs["end_dt"].iloc[-1]
+            sub_dts = pd.to_datetime(player_segs["start_dt"].values[1:])
+            subperiod_data: pd.DataFrame = self.data[self.data["subperiod_id"] == i]
 
-            print(f"\n{'-' * 24} Headcount Segment {i} {'-' * 24}")
-            print(subperiods.drop(["players", "headcount_seg"], axis=1))
+            print(f"\n{'-' * 24} Subperiod {i} {'-' * 24}")
+            print(player_segs.drop(["players", "subperiod_id"], axis=1))
 
             if precomputed_path is None or self.role_seq.empty:
                 print("\n* Step 1: Frame-by-frame role assignment using RoleRep")
-                rolerep = RoleRep(headcount_seg_data)
-                session_role_seq = rolerep.run(freq="1S")
+                rolerep = RoleRep(subperiod_data)
+                subperiod_role_seq = rolerep.run(freq="1S")
             else:
                 print("\n* Step 1: Load the pre-computed role assignment result")
-                session_role_seq = self.role_seq[self.role_seq["headcount_seg"] == i]
-                print(f"Session role sequence loaded and filtered from '{precomputed_path}'.")
+                subperiod_role_seq = self.role_seq[self.role_seq["subperiod_id"] == i]
+                print(f"Subperiod role sequence loaded and filtered from '{precomputed_path}'.")
 
-            role_list.append(session_role_seq)
+            role_list.append(subperiod_role_seq)
 
             # Exclude situations such as set-pieces that are irrelevant to the team formation
-            valid_seq = session_role_seq[session_role_seq["switch_rate"] <= max_sr]
+            valid_seq = subperiod_role_seq[subperiod_role_seq["switch_rate"] <= max_sr]
 
             # Check whether all the 10 outfield players are measured for some periods
             role_x = valid_seq.pivot_table("x_norm", "datetime", "role", aggfunc="first")
@@ -235,8 +235,8 @@ class SoccerCPD:
                 form_chg_dts = [start_dt] + form_chg_dts_rounded + [end_dt]
 
             else:
-                print("\n* Step 2: Compute the formation graph of the session")
-                # Assume there are no formation change throughout the session
+                print("\n* Step 2: Compute the formation graph of the subperiod")
+                # Assume there are no formation change throughout the subperiod
                 form_chg_dts = [start_dt, end_dt]
 
                 print("\n* Step 3: Find the most frequent role permutation per 5-minute segment")
@@ -259,7 +259,7 @@ class SoccerCPD:
 
                 # Record the details of the formation period
                 form_record = {
-                    "period_id": subperiods["period_id"].iloc[0],
+                    "period_id": player_segs["period_id"].iloc[0],
                     "form_seg": form_seg,
                     "start_dt": fp_start_dt,
                     "end_dt": fp_end_dt,
@@ -300,8 +300,8 @@ class SoccerCPD:
                         duration = (rp_end_dt - rp_start_dt).total_seconds()
 
                         # Find the most frequent role assignment in the role period
-                        subperiod_id = valid_seq[valid_seq["datetime"] >= rp_start_dt].iloc[0]["subperiod_id"]
-                        pp_seq: pd.DataFrame = valid_seq[valid_seq["subperiod_id"] == subperiod_id]
+                        player_seg = valid_seq[valid_seq["datetime"] >= rp_start_dt].iloc[0]["player_seg"]
+                        pp_seq: pd.DataFrame = valid_seq[valid_seq["player_seg"] == player_seg]
 
                         temp_roles = pp_seq.pivot_table("role", "datetime", "player_id", aggfunc="first")
                         role_set = set(temp_roles.dropna().iloc[0])
@@ -315,7 +315,7 @@ class SoccerCPD:
                         # record the details of the role period
                         role_segments.append(
                             {
-                                "period_id": subperiods["period_id"].iloc[0],
+                                "period_id": player_segs["period_id"].iloc[0],
                                 "form_seg": form_seg,
                                 "role_seg": role_seg,
                                 "start_dt": rp_start_dt,
@@ -333,26 +333,26 @@ class SoccerCPD:
         if self.rolecpd_method is None:
             # Find the most frequent role permutation per 5-minute segment
             perms_str = pd.concat(perm_list)
-            bins = self.subperiods["start_dt"].tolist()[1:] + [self.subperiods["end_dt"].iloc[0]]
-            perms_str["subperiod_id"] = pd.cut(perms_str.index, bins, labels=self.subperiods.index[1:])
+            bins = self.player_segs["start_dt"].tolist()[1:] + [self.player_segs["end_dt"].iloc[0]]
+            perms_str["player_seg"] = pd.cut(perms_str.index, bins, labels=self.player_segs.index[1:])
 
             base_perm_list = []
-            for i in self.subperiods.index[1:]:
-                period_perms_str: pd.DataFrame = perms_str[perms_str["subperiod_id"] == i]
+            for i in self.player_segs.index[1:]:
+                period_perms_str: pd.DataFrame = perms_str[perms_str["player_seg"] == i]
                 if period_perms_str.empty:
                     continue
 
-                i = self.subperiods.at[i, "period_id"]
+                i = self.player_segs.at[i, "period_id"]
                 period_perms_str["period_id"] = i
                 period_perms_str["form_seg"] = i
 
-                period_start_dt: datetime = self.subperiods.at[i, "start_dt"]
+                period_start_dt: datetime = self.player_segs.at[i, "start_dt"]
                 offset = f"{period_start_dt.minute * SCALAR_TIME + period_start_dt.second}S"
                 resampler = period_perms_str.resample("5T", closed="left", offset=offset)
 
                 base_perms = resampler.apply(most_common).reset_index()
                 base_perms["end_dt"] = base_perms["datetime"].shift(-1)
-                base_perms.iat[-1, -1] = self.subperiods.at[i, "end_dt"]
+                base_perms.iat[-1, -1] = self.player_segs.at[i, "end_dt"]
                 base_perm_list.append(base_perms)
 
             role_segments = pd.concat(base_perm_list, ignore_index=True)
@@ -369,7 +369,7 @@ class SoccerCPD:
         self.role_segs = pd.DataFrame(role_segments).set_index("role_seg")
 
         # Label formation and role periods to the timestamps of data and role_seq
-        match_end_dt = self.subperiods["end_dt"].iloc[-1]
+        match_end_dt = self.player_segs["end_dt"].iloc[-1]
         self.data["form_seg"] = pd.cut(
             self.data.index,
             bins=self.form_segs["start_dt"].tolist() + [match_end_dt],

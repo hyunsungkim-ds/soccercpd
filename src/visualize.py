@@ -98,13 +98,13 @@ def plot_timeline(role_seq: pd.DataFrame, roster: pd.DataFrame = None, ax: Axes 
     roles_reshaped = pd.merge(times, roles_reshaped.rename(columns=player_dict).reset_index())
     roles_resampled = []
 
-    session_start_dts = role_seq.groupby("period_id")["datetime"].min()  # - timedelta(seconds=1)
-    for s, dt in session_start_dts.items():
+    period_start_dts = role_seq.groupby("period_id")["datetime"].min()  # - timedelta(seconds=1)
+    for s, dt in period_start_dts.items():
         offset = f"{dt.second % 5}S"
-        session_roles_reshaped = roles_reshaped[roles_reshaped["period_id"] == s].set_index("datetime")
-        session_roles_resampled = session_roles_reshaped.resample("5S", offset=offset).first()
-        session_roles_resampled.at[session_roles_resampled.index[0], "timestamp"] = 0
-        roles_resampled.append(session_roles_resampled)
+        period_roles_reshaped = roles_reshaped[roles_reshaped["period_id"] == s].set_index("datetime")
+        period_roles_resampled = period_roles_reshaped.resample("5S", offset=offset).first()
+        period_roles_resampled.at[period_roles_resampled.index[0], "timestamp"] = 0
+        roles_resampled.append(period_roles_resampled)
 
     roles_resampled = pd.concat(roles_resampled)
     # players = np.sort([c for c in roles_resampled.columns if c not in ["period_id", "timestamp"]])
@@ -117,16 +117,16 @@ def plot_timeline(role_seq: pd.DataFrame, roster: pd.DataFrame = None, ax: Axes 
         xticks.append(roles_resampled.index.get_loc(dt))
     xticks.append(len(roles_resampled) - 1)
 
-    session_labels = roles_resampled["period_id"].iloc[xticks].apply(lambda x: f"H{x}-").values
+    period_labels = roles_resampled["period_id"].iloc[xticks].apply(lambda x: f"H{x}-").values
     xticktimes = roles_resampled["timestamp"].iloc[xticks[:-1]].values.tolist() + [roles_resampled["timestamp"].iloc[-1] + 5]
     time_labels = np.array([seconds_to_time_str(x) for x in xticktimes])
 
     ax.vlines(xticks, ymin=0, ymax=len(players), colors="k", linestyles="--")
     ax.set_xticks(xticks)
-    ax.set_xticklabels(session_labels + time_labels, rotation=45)
+    ax.set_xticklabels(period_labels + time_labels, rotation=45)
     ax.set_yticks(np.arange(len(players)) + 0.5)
     ax.set_yticklabels(players)
-    ax.set_xlabel("session-time")
+    ax.set_xlabel("period-time")
     ax.set_ylabel("player")
 
     return ax

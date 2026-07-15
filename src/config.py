@@ -10,8 +10,8 @@ HEADER_ROLE_SEQ = [
     "player_id",
     "period_id",
     "timestamp",
-    "headcount_seg",
     "subperiod_id",
+    "player_seg",
     "form_seg",
     "role_seg",
     "x",
@@ -49,7 +49,7 @@ HEADER_ROLE_ALIGNS = [
 ]
 HEADER_ROLE_SUMMARY = [
     "activity_id",
-    "subperiod_id",
+    "player_seg",
     "form_seg",
     "role_seg",
     "period_id",

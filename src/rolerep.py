@@ -60,8 +60,8 @@ class RoleRep:
             return multivariate_normal(coords.mean(), coords.cov())
 
     @staticmethod
-    def update_params(role_seq: pd.DataFrame, by_subperiod_id=False) -> pd.DataFrame:
-        cols = ["subperiod_id", "role"] if by_subperiod_id else ["role"]
+    def update_params(role_seq: pd.DataFrame, by_player_seg=False) -> pd.DataFrame:
+        cols = ["player_seg", "role"] if by_player_seg else ["role"]
         role_distns = role_seq.groupby(cols).apply(RoleRep.estimate_mvn).reset_index()
         return role_distns.dropna().rename(columns={0: "distn"})
 
@@ -102,11 +102,11 @@ class RoleRep:
         return cost_mat[row_idx, col_idx].mean()
 
     def run(self, freq="1S", verbose=True) -> pd.DataFrame:
-        temp_role_seq = self.xy.groupby("subperiod_id").apply(RoleRep.init_role_seq, freq=freq)
+        temp_role_seq = self.xy.groupby("player_seg").apply(RoleRep.init_role_seq, freq=freq)
         temp_role_seq = temp_role_seq.reset_index(drop=True).dropna()
-        temp_role_distns = RoleRep.update_params(temp_role_seq, by_subperiod_id=True)
-        temp_role_seq = pd.merge(temp_role_seq, temp_role_distns[["subperiod_id", "role"]])
-        self.role_seq, _ = RoleRep.align_formations(temp_role_seq, temp_role_distns, "subperiod_id")
+        temp_role_distns = RoleRep.update_params(temp_role_seq, by_player_seg=True)
+        temp_role_seq = pd.merge(temp_role_seq, temp_role_distns[["player_seg", "role"]])
+        self.role_seq, _ = RoleRep.align_formations(temp_role_seq, temp_role_distns, "player_seg")
         self.role_distns = RoleRep.update_params(self.role_seq)
 
         max_iter = 10
