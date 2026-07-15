@@ -94,21 +94,21 @@ def plot_timeline(role_seq: pd.DataFrame, roster: pd.DataFrame = None, ax: Axes 
         roster["player_label"] = roster.apply(lambda x: f"{x['player_name']} ({x['squad_num']})", axis=1)
         player_dict = roster.set_index("squad_num")["player_label"].to_dict()
 
-    times = role_seq[["datetime", "session", "time"]].drop_duplicates().sort_values("datetime")
+    times = role_seq[["datetime", "period_id", "timestamp"]].drop_duplicates().sort_values("datetime")
     roles_reshaped = pd.merge(times, roles_reshaped.rename(columns=player_dict).reset_index())
     roles_resampled = []
 
-    session_start_dts = role_seq.groupby("session")["datetime"].min()  # - timedelta(seconds=1)
+    session_start_dts = role_seq.groupby("period_id")["datetime"].min()  # - timedelta(seconds=1)
     for s, dt in session_start_dts.items():
         offset = f"{dt.second % 5}S"
-        session_roles_reshaped = roles_reshaped[roles_reshaped["session"] == s].set_index("datetime")
+        session_roles_reshaped = roles_reshaped[roles_reshaped["period_id"] == s].set_index("datetime")
         session_roles_resampled = session_roles_reshaped.resample("5S", offset=offset).first()
-        session_roles_resampled.at[session_roles_resampled.index[0], "time"] = 0
+        session_roles_resampled.at[session_roles_resampled.index[0], "timestamp"] = 0
         roles_resampled.append(session_roles_resampled)
 
     roles_resampled = pd.concat(roles_resampled)
-    # players = np.sort([c for c in roles_resampled.columns if c not in ["session", "time"]])
-    players = [c for c in roles_resampled.columns if c not in ["session", "time"]]
+    # players = np.sort([c for c in roles_resampled.columns if c not in ["period_id", "timestamp"]])
+    players = [c for c in roles_resampled.columns if c not in ["period_id", "timestamp"]]
     sns.heatmap(roles_resampled[players].T, vmin=0.5, vmax=10.5, cmap="tab10", cbar=False)
 
     role_start_dts = role_seq.groupby("role_period")["datetime"].min()  # - timedelta(seconds=1)
@@ -117,8 +117,8 @@ def plot_timeline(role_seq: pd.DataFrame, roster: pd.DataFrame = None, ax: Axes 
         xticks.append(roles_resampled.index.get_loc(dt))
     xticks.append(len(roles_resampled) - 1)
 
-    session_labels = roles_resampled["session"].iloc[xticks].apply(lambda x: f"H{x}-").values
-    xticktimes = roles_resampled["time"].iloc[xticks[:-1]].values.tolist() + [roles_resampled["time"].iloc[-1] + 5]
+    session_labels = roles_resampled["period_id"].iloc[xticks].apply(lambda x: f"H{x}-").values
+    xticktimes = roles_resampled["timestamp"].iloc[xticks[:-1]].values.tolist() + [roles_resampled["timestamp"].iloc[-1] + 5]
     time_labels = np.array([seconds_to_time_str(x) for x in xticktimes])
 
     ax.vlines(xticks, ymin=0, ymax=len(players), colors="k", linestyles="--")

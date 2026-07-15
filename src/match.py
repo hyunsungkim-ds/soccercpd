@@ -25,8 +25,8 @@ class Match:
     @staticmethod
     def compute_player_stats(player_data: pd.DataFrame, td=0.1, hsr_speed=20, hsr_time=0.5) -> pd.Series:
         duration = len(player_data.dropna(subset=["x"])) * td
-        distance = player_data["speed"].sum() / 3.6 * td
-        hsr_data = player_data[player_data["speed"] >= hsr_speed].copy()
+        distance = player_data["s"].sum() / 3.6 * td
+        hsr_data = player_data[player_data["s"] >= hsr_speed].copy()
 
         if hsr_data.empty:
             return pd.Series([duration, distance, 0, 0])
@@ -39,7 +39,7 @@ class Match:
             time_counts = hsr_ids.value_counts(sort=False)
             valid_hsr_ids = hsr_ids[hsr_ids.isin(time_counts[time_counts * td >= hsr_time].index)]
             hsr_count = len(valid_hsr_ids.unique())
-            hsr_dist = hsr_data.loc[valid_hsr_ids.index, "speed"].sum() / 3.6 * td
+            hsr_dist = hsr_data.loc[valid_hsr_ids.index, "s"].sum() / 3.6 * td
 
             return pd.Series([duration, distance, hsr_count, hsr_dist])
 

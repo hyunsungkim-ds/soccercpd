@@ -259,7 +259,7 @@ class SoccerCPD:
 
                 # Record the details of the formation period
                 form_record = {
-                    "session": player_periods["session"].iloc[0],
+                    "period_id": player_periods["period_id"].iloc[0],
                     "form_period": form_period,
                     "start_dt": fp_start_dt,
                     "end_dt": fp_end_dt,
@@ -315,7 +315,7 @@ class SoccerCPD:
                         # record the details of the role period
                         role_periods.append(
                             {
-                                "session": player_periods["session"].iloc[0],
+                                "period_id": player_periods["period_id"].iloc[0],
                                 "form_period": form_period,
                                 "role_period": role_period,
                                 "start_dt": rp_start_dt,
@@ -342,8 +342,8 @@ class SoccerCPD:
                 if period_perms_str.empty:
                     continue
 
-                i = self.player_periods.at[i, "session"]
-                period_perms_str["session"] = i
+                i = self.player_periods.at[i, "period_id"]
+                period_perms_str["period_id"] = i
                 period_perms_str["form_period"] = i
 
                 period_start_dt: datetime = self.player_periods.at[i, "start_dt"]
@@ -483,7 +483,7 @@ class SoccerCPD:
         switches["duration"] = (switches["end_dt"] - switches["start_dt"]).apply(lambda x: x.total_seconds() + 1)
         switches["switch_rate"] = roleperms.loc[start_dts, "switch_rate"].values
 
-        match_times = self.role_seq.set_index("datetime")[["session", "time", "form_period"]].drop_duplicates()
+        match_times = self.role_seq.set_index("datetime")[["period_id", "timestamp", "form_period"]].drop_duplicates()
         switches = pd.merge(match_times, switches, left_index=True, right_on="start_dt")
 
         switches = switches[(switches["duration"] > 1) & (switches["switch_rate"] > 0)].reset_index(drop=True).copy()

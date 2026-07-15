@@ -66,7 +66,7 @@ class RoleRep:
         return role_distns.dropna().rename(columns={0: "distn"})
 
     @staticmethod
-    def align_formations(role_seq: pd.DataFrame, role_distns: pd.DataFrame, label_group="session"):
+    def align_formations(role_seq: pd.DataFrame, role_distns: pd.DataFrame, label_group="period_id"):
         groups = role_seq[label_group].unique()
         base_group = groups[role_distns.groupby(label_group)["role"].count().argmax()]
         base_role_distns = role_distns[role_distns[label_group] == base_group]
@@ -134,7 +134,7 @@ class RoleRep:
                     break
             cost_prev = cost_new
 
-        session = self.xy["session"].iloc[0]
-        self.role_distns["session"] = session
+        period_id = self.xy["period_id"].iloc[0]
+        self.role_distns["period_id"] = period_id
 
         return self.role_seq

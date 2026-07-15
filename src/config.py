@@ -8,8 +8,8 @@ DIR_TEMP_DATA = f"{DIR_DATA}/rtemp"
 # DataFrame headers
 HEADER_ROLE_SEQ = [
     "player_id",
-    "session",
-    "time",
+    "period_id",
+    "timestamp",
     "subsession",
     "player_period",
     "form_period",
@@ -24,7 +24,7 @@ HEADER_ROLE_SEQ = [
 ]
 HEADER_FORM_PERIODS = [
     "form_period",
-    "session",
+    "period_id",
     "start_dt",
     "end_dt",
     "duration",
@@ -33,7 +33,7 @@ HEADER_FORM_PERIODS = [
 HEADER_ROLE_PERIODS = [
     "form_period",
     "role_period",
-    "session",
+    "period_id",
     "start_dt",
     "end_dt",
     "duration",
@@ -52,7 +52,7 @@ HEADER_ROLE_SUMMARY = [
     "player_period",
     "form_period",
     "role_period",
-    "session",
+    "period_id",
     "start_dt",
     "end_dt",
     "duration",

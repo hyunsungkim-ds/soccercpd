@@ -64,7 +64,7 @@ def reshape_traces(traces: pd.DataFrame) -> pd.DataFrame:
     players = [c[:3] for c in traces.columns if c[3:] == "_x"]
 
     for p in players:
-        cols = ["datetime", "session", "time", "player_period", f"{p}_x", f"{p}_y"]
+        cols = ["datetime", "period_id", "timestamp", "player_period", f"{p}_x", f"{p}_y"]
         player_xy = traces[cols].copy().rename(columns={f"{p}_x": "x", f"{p}_y": "y"})
         player_xy["player_id"] = p
         xy_list.append(player_xy)
@@ -152,12 +152,12 @@ def aggregate_player_periods(data: pd.DataFrame) -> pd.DataFrame:
         data = data.reset_index().rename(columns={"index": "datetime"})
 
     grouper = data.groupby("player_period")
-    freq = round(data["time"].iloc[1] - data["time"].iloc[0], 3)
+    freq = round(data["timestamp"].iloc[1] - data["timestamp"].iloc[0], 3)
 
-    sessions = grouper["session"].first()
+    periods = grouper["period_id"].first()
     start_dts = grouper["datetime"].first().rename("start_dt")
     end_dts = grouper["datetime"].last().rename("end_dt") + timedelta(seconds=freq)
-    player_periods = pd.concat([sessions, start_dts, end_dts], axis=1)
+    player_periods = pd.concat([periods, start_dts, end_dts], axis=1)
 
     player_periods["players"] = None
     for i in player_periods.index:
@@ -165,7 +165,7 @@ def aggregate_player_periods(data: pd.DataFrame) -> pd.DataFrame:
         player_periods.at[i, "players"] = pp_data.groupby("player_id")["x"].first().dropna().index.tolist()
 
     n_players = player_periods["players"].apply(len)
-    n_players = pd.concat([player_periods["session"], n_players], axis=1)
+    n_players = pd.concat([player_periods["period_id"], n_players], axis=1)
     player_periods["subsession"] = (n_players.diff().fillna(1) != 0).any(axis=1).astype(int).cumsum()
 
     return player_periods
