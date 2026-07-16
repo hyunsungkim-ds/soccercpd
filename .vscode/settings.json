@@ -2,16 +2,6 @@
     "editor.fontSize": 15,
     "editor.fontFamily": "Menlo, Monaco, Monospace",
     "terminal.integrated.fontSize": 15,
-    // "jupyter.notebookFileRoot": "${workspaceFolder}",
-    // "files.autoSave": "afterDelay",
-    // "files.autoSaveDelay": 10000,
-    "python.linting.enabled": true,
-    "python.linting.flake8Enabled": true,
-    "python.linting.flake8Args": [
-        "--max-line-length=120",
-        "--ignore=E203,F401,F841,W503,F403,F405"
-    ],
-    "python.formatting.provider": "none",
     "[python]": {
         "editor.defaultFormatter": "ms-python.black-formatter",
         "editor.formatOnSave": true,
@@ -19,13 +9,28 @@
             "source.organizeImports": "explicit"
         },
     },
+    // Project runtime env (for running/debugging code, terminal).
+    "python.defaultInterpreterPath": "/home/users/hyunsung/miniconda3/envs/soccercpd/bin/python",
+    "black-formatter.interpreter": [
+        "/home/users/hyunsung/miniconda3/bin/python"
+    ],
     "black-formatter.args": [
         "--line-length",
         "120"
+    ],
+    "isort.interpreter": [
+        "/home/users/hyunsung/miniconda3/bin/python"
     ],
     "isort.args": [
         "--profile",
         "black"
     ],
+    // flake8 config (max-line-length, ignore) lives in setup.cfg;
+    // the ms-python.flake8 extension reads it automatically.
+    "flake8.interpreter": [
+        "/home/users/hyunsung/miniconda3/bin/python"
+    ],
     "notebook.output.textLineLimit": 1000,
+    "python-envs.defaultEnvManager": "ms-python.python:conda",
+    "python-envs.defaultPackageManager": "ms-python.python:conda",
 }

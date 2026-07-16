@@ -1,9 +1,11 @@
 # Private files
+.claude/
 private_*/
 
 # Data files
-data/sportec
 data/kloppy
+data/sportec
+data/tracab
 data/ugp/
 data/roster/
 data/gseg_avg/
