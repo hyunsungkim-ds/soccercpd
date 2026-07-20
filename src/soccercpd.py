@@ -22,7 +22,6 @@ from src.utils import (
     detect_change_times,
     most_common,
 )
-from src.visualize import plot_graph, plot_timeline
 
 pd.set_option("display.width", 250)
 pd.set_option("display.max_rows", 100)
@@ -44,10 +43,13 @@ class SoccerCPD:
         self.role_seq = pd.DataFrame(columns=["datetime"] + HEADER_ROLE_SEQ)
         self.form_segs = None
         self.role_segs = None
-        self.role_summary = None
+        self.role_assign = None
         self.role_labels = None
 
-    def revise_short_role_segs(self, thres_dur: float = MIN_PERIOD_DUR, max_sr: float = MAX_SWITCH_RATE):
+    def revise_short_role_segs(self, thres_dur: float = MIN_SEG_DUR, max_sr: float = MAX_SWITCH_RATE):
+        # The role assignment in short segments is unreliable,
+        # so snap each player's role to the neighbouring segments' where it deviates from both,
+        # then fill the remaining roles by nearest position.
         for fp in self.role_segs["form_seg"].unique():
             fp_role_segs: pd.DataFrame = self.role_segs[self.role_segs["form_seg"] == fp]
 
@@ -163,7 +165,13 @@ class SoccerCPD:
         # role_summary = pd.merge(role_summary, self.roster[["squad_num", "player_name"]].reset_index())
         return role_summary[HEADER_ROLE_SUMMARY[1:]].astype({"player_seg": int})
 
-    def run(self, precomputed_path: str = None, freq: str = "5S", max_sr: float = MAX_SWITCH_RATE) -> None:
+    def run(
+        self,
+        precomputed_path: str = None,
+        freq: str = "5S",
+        max_sr: float = MAX_SWITCH_RATE,
+        min_seg_dur: float = MIN_SEG_DUR,
+    ) -> None:
         form_segments = []
         role_segments = []
 
@@ -296,8 +304,12 @@ class SoccerCPD:
                     print("Detected role change-points:")
                     pprint(role_chg_dts_rounded)
 
-                    role_chg_dts = [fp_start_dt, fp_end_dt] + input_sub_dts.tolist()
-                    role_chg_dts = list(set(role_chg_dts) | set(pd.to_datetime(role_chg_dts_rounded)))
+                    # Keep form-period ends + substitutions as boundaries; a detected change-point is
+                    # dropped when it would make a segment shorter than `min_seg_dur`, merging it into a neighbour.
+                    role_chg_dts = sorted(set([fp_start_dt, fp_end_dt] + input_sub_dts.tolist()))
+                    for cp in sorted(pd.to_datetime(role_chg_dts_rounded)):
+                        if all(abs((cp - b).total_seconds()) >= min_seg_dur for b in role_chg_dts):
+                            role_chg_dts.append(cp)
                     role_chg_dts.sort()
 
                     for role_chg_idx in range(1, len(role_chg_dts)):
@@ -307,7 +319,13 @@ class SoccerCPD:
                         duration = (rp_end_dt - rp_start_dt).total_seconds()
 
                         # Find the most frequent role assignment in the role period
-                        player_seg = valid_seq[valid_seq["datetime"] >= rp_start_dt].iloc[0]["player_seg"]
+                        rp_seq = valid_seq[(valid_seq["datetime"] >= rp_start_dt) & (valid_seq["datetime"] < rp_end_dt)]
+                        if rp_seq.empty:
+                            # No possession-valid frames in this role period (e.g. an all-high-
+                            # switch-rate tail); skip it so it merges into the neighbouring role
+                            # period instead of raising on the empty selection below.
+                            continue
+                        player_seg = rp_seq.iloc[0]["player_seg"]
                         pp_seq: pd.DataFrame = valid_seq[valid_seq["player_seg"] == player_seg]
 
                         temp_roles = pp_seq.pivot_table("role", "datetime", "player_id", aggfunc="first")
@@ -413,14 +431,14 @@ class SoccerCPD:
 
         self.form_segs = self.form_segs.reset_index()
         self.role_segs = self.role_segs.reset_index()[HEADER_ROLE_SEGS]
-        self.role_summary = self.summarize_role_assignments()
+        self.role_assign = self.summarize_role_assignments()
         print()
         print("-" * 73)
         print("Formation segments:")
-        print(self.form_segs[HEADER_FORM_SEGS[:-1]])
+        print(self.form_segs[["form_seg", "period_id", "start_dt", "end_dt", "duration"]])
         print()
         print("Role segments:")
-        print(self.role_segs[HEADER_ROLE_SEGS[:-1]])
+        print(self.role_segs[["form_seg", "role_seg", "period_id", "start_dt", "end_dt", "duration"]])
         print()
 
     def label_roles(
@@ -434,8 +452,8 @@ class SoccerCPD:
 
         role_labels = dict()
         self.form_segs["formation"] = np.nan
-        self.role_summary["formation"] = np.nan
-        self.role_summary["aligned_role"] = np.nan
+        self.role_assign["formation"] = np.nan
+        self.role_assign["aligned_role"] = np.nan
 
         for i in self.form_segs.index:
             form_seg = self.form_segs.at[i, "form_seg"]
@@ -468,13 +486,13 @@ class SoccerCPD:
             row_idx, col_idx = linear_sum_assignment(cost_mat.values)
             role_labels[form_seg] = dict(zip(valid_roles[col_idx], cost_mat.index[row_idx].values))
 
-            fp_rs: pd.DataFrame = self.role_summary.loc[self.role_summary["form_seg"] == form_seg]
+            fp_rs: pd.DataFrame = self.role_assign.loc[self.role_assign["form_seg"] == form_seg]
             if len(self.form_segs.loc[i, xy_cols[0::2]].dropna()) < 10:
                 form_label = "others"
 
             self.form_segs.at[i, "formation"] = form_label
-            self.role_summary.loc[fp_rs.index, "formation"] = form_label
-            self.role_summary.loc[fp_rs.index, "aligned_role"] = fp_rs["base_role"].replace(role_labels[form_seg])
+            self.role_assign.loc[fp_rs.index, "formation"] = form_label
+            self.role_assign.loc[fp_rs.index, "aligned_role"] = fp_rs["base_role"].replace(role_labels[form_seg])
 
         self.role_labels = pd.DataFrame(role_labels).T[np.arange(10) + 1]
 
@@ -501,7 +519,6 @@ class SoccerCPD:
 
         for i in tqdm(switches.index):
             start_dt = switches.at[i, "start_dt"]
-            end_dt = switches.at[i, "end_dt"]
             form_seg = switches.at[i, "form_seg"]
             roleperm = roleperms.loc[start_dt]
             switches.at[i, "switch_roles"] = decompose_perm_to_cycles(roleperm, role_labels.loc[form_seg])
@@ -510,63 +527,7 @@ class SoccerCPD:
             role_players = role_players.set_index("base_role")["player_id"].to_dict()
             switches.at[i, "switch_players"] = decompose_perm_to_cycles(roleperm, role_players)
 
-            # if len(switches.at[i, "switch_players"]) > 0:
-            #     switch_players = np.concatenate(switches.at[i, "switch_players"])
-            #     switch_speeds = self.data.loc[start_dt:end_dt, [f"{p}_speed" for p in switch_players]].max()
-            #     switches.at[i, "argmax_speed"] = switch_speeds.idxmax().split("_")[0]
-            #     switches.at[i, "max_speed"] = switch_speeds.max()
-
         return switches
-
-    def visualize(self, roster: pd.DataFrame = None, role_labels: pd.DataFrame = None, save_dir=None):
-        import matplotlib.font_manager as fm
-        import matplotlib.gridspec as gridspec
-        import matplotlib.pyplot as plt
-        import seaborn as sns
-
-        # This four lines are for visualizing Korean characters
-        # If you don't need this, remove the following four lines
-        font_path = "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Light.ttc"
-        fontprop = fm.FontProperties(fname=font_path)
-        plt.rcParams["font.family"] = fontprop.get_name()
-        sns.set_theme(font=fontprop.get_name(), font_scale=1.5)
-
-        fig = plt.figure(figsize=(19.2, 10.8), dpi=100)
-        gs = gridspec.GridSpec(2, 4, left=0.1, right=0.9, bottom=0.1, top=0.9, wspace=0.2, hspace=0.2)
-
-        for i, form_seg in enumerate(self.form_segs["form_seg"][:4]):
-            fp_role_seq = self.role_seq[(self.role_seq["form_seg"] == form_seg) & (self.role_seq["role"].notna())]
-            fp_role_labels = role_labels.loc[form_seg].dropna().to_dict() if role_labels is not None else None
-            fp_graph = self.form_segs.loc[i]
-
-            plt.subplot(gs[0, i])
-            plot_graph(fp_role_seq, fp_role_labels, fp_graph)
-
-            fp_role_segs = self.role_segs[self.role_segs["form_seg"] == form_seg]
-            start_rp = fp_role_segs["role_seg"].min()
-            form_label = "others" if fp_graph["formation"] == "others" else "-".join(fp_graph["formation"])
-
-            if len(fp_role_segs) == 1:
-                plt.title(f"Role Period {start_rp}: {form_label}", fontsize=18)
-            else:
-                end_rp = fp_role_segs["role_seg"].max()
-                plt.title(f"Role Periods {start_rp}-{end_rp}: {form_label}", fontsize=18)
-
-        ax = fig.add_subplot(gs[1, :])
-        plot_timeline(self.role_seq, roster, ax)
-        plt.title("Role Change Timeline", fontsize=18)
-
-        if save_dir is not None:
-            os.makedirs(save_dir, exist_ok=True)
-            plt.savefig(f"{save_dir}/timeline.png", bbox_inches="tight")
-            plt.close(fig)
-            print(f"Successfully saved in '{save_dir}/timeline.png'.")
-
-        else:
-            plt.show()
-            plt.close(fig)
-
-        sns.reset_orig()
 
     def save_results(self, target_dir, form_summary=True, role_summary=True, role_seq=True):
         os.makedirs(target_dir, exist_ok=True)
@@ -578,7 +539,7 @@ class SoccerCPD:
 
         # Save role_summary
         if role_summary:
-            self.role_summary.to_csv(f"{target_dir}/role_summary.csv", index=False, encoding="utf-8-sig")
+            self.role_assign.to_csv(f"{target_dir}/role_summary.csv", index=False, encoding="utf-8-sig")
             print(f"Successfully saved in '{target_dir}/role_summary.csv'.")
 
         # Save role_seq
