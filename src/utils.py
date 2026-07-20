@@ -180,151 +180,6 @@ def _infer_fps(data: pd.DataFrame) -> int:
     return 25
 
 
-def smooth_possession(data: pd.DataFrame, min_poss_sec: float = 3.0, fps: int = 25) -> pd.DataFrame:
-    """Reassign short `ball_owning_team_id` spells to the opponent so possession reflects sustained control.
-
-    Expects an alive-only long stream (frame-level `ball_owning_team_id` shared across players). Per
-    `period_id`, a spell is a maximal run of the same owner over the alive frames; any spell whose
-    in-play duration (n_frames / fps) is below `min_possession_sec` is flipped to the opponent. Flips
-    are repeated (shortest-first) until no spell is below the threshold, so brief blips get absorbed
-    into the surrounding possession. Only `ball_owning_team_id` is modified.
-    """
-    if not min_poss_sec:
-        return data
-
-    data = data.copy()
-    min_frames = int(round(min_poss_sec * fps))
-    frames = data.drop_duplicates("datetime")[["datetime", "period_id", "ball_owning_team_id"]]
-    frames = frames.sort_values("datetime").reset_index(drop=True)
-
-    smoothed = {}
-    for period in frames["period_id"].unique():
-        owners = frames.loc[frames["period_id"] == period, ["datetime", "ball_owning_team_id"]]
-
-        # Run-length encode the owner sequence, then flip short runs to the opponent until none remain.
-        runs = []  # [owner, length]
-        for o in owners["ball_owning_team_id"].to_numpy():
-            if runs and runs[-1][0] == o:
-                runs[-1][1] += 1
-            else:
-                runs.append([o, 1])
-
-        while True:
-            short = [k for k, r in enumerate(runs) if r[1] < min_frames and r[0] in ("home", "away")]
-            if not short:
-                break
-            k = min(short, key=lambda k: runs[k][1])
-            runs[k][0] = "away" if runs[k][0] == "home" else "home"
-            merged = []
-            for owner, length in runs:
-                if merged and merged[-1][0] == owner:
-                    merged[-1][1] += length
-                else:
-                    merged.append([owner, length])
-            runs = merged
-
-        seq = [owner for owner, length in runs for _ in range(length)]
-        for dt, owner in zip(owners["datetime"].to_numpy(), seq):
-            smoothed[dt] = owner
-
-    data["ball_owning_team_id"] = data["datetime"].map(smoothed)
-    return data
-
-
-def retimeline_stream(stream: pd.DataFrame, fps: int = 25):
-    """Reassign compact, contiguous `timestamp`/`datetime` to a (possession-)filtered stream.
-
-    Filtering leaves large real-time gaps that break freq inference, duration accounting, and CPD
-    frame-count gates. This rebuilds a dense per-period frame grid (spacing 1/fps) and stacks periods
-    end-to-end for a monotonic `datetime`, so downstream (RoleRep resampling, `aggregate_player_segs`,
-    MIN_PERIOD_DUR) behaves as on a continuous stream. All players share the same frame grid (the
-    possession filter is frame-level), so pivots stay aligned; `player_seg`/`period_id`/coords are kept.
-
-    Returns (retimelined_stream, frame_map) where frame_map maps the compact grid back to the original
-    `datetime`/`timestamp` (for reporting CPD change-points on the real match clock).
-    """
-    stream = stream.copy()
-    dt = 1.0 / fps
-    frames = stream.drop_duplicates("datetime")[["period_id", "player_seg", "datetime", "timestamp"]]
-    frames = frames.sort_values("datetime").reset_index(drop=True)
-
-    # Lay the retained frames end-to-end at 1/fps spacing, but restart each player_seg (substitution
-    # segment) at a whole second. This keeps player_seg boundaries on the 1s grid RoleRep resamples
-    # onto -- otherwise a compact 1s bin could straddle a substitution and pick up 11 players.
-    new_ts = np.empty(len(frames))
-    cum = 0.0
-    prev_seg = None
-    for idx, seg in enumerate(frames["player_seg"].to_numpy()):
-        if seg != prev_seg:
-            cum = float(np.ceil(cum)) if idx > 0 else 0.0
-            prev_seg = seg
-        new_ts[idx] = round(cum, 3)
-        cum += dt
-
-    base = datetime(2024, 1, 1, 1)
-    frames["new_timestamp"] = new_ts
-    frames["new_datetime"] = base + pd.to_timedelta(new_ts, unit="s")
-
-    frame_map = frames.rename(columns={"datetime": "orig_datetime", "timestamp": "orig_timestamp"})
-    key = frames[["period_id", "datetime", "new_timestamp", "new_datetime"]]
-    merged = stream.merge(key, on=["period_id", "datetime"], how="left")
-    merged["timestamp"] = merged["new_timestamp"]
-    merged["datetime"] = merged["new_datetime"]
-    merged = merged.drop(columns=["new_timestamp", "new_datetime"])
-    return merged, frame_map
-
-
-def prepare_cpd_streams(
-    input_data: pd.DataFrame,
-    by_possession: bool = False,
-    retimeline: bool = True,
-    min_poss_sec: float = 3.0,
-    min_frames: int = 750,
-) -> dict:
-    """Split the SoccerCPD long input into per-team (and optionally per-phase) streams.
-
-    Returns ``{(home_away, phase): stream}``. SoccerCPD is applied to each stream by the caller.
-    - by_possession=False: one stream per team, phase="all" (whole-team, current behavior).
-    - by_possession=True: keep alive frames, smooth short possessions (`smooth_possession`), then per
-      team split into attack (`ball_owning_team_id == team`) / defend (`!= team`); each stream is
-      re-timelined. Streams with fewer than `min_frames` frames are skipped (logged).
-    """
-    streams = {}
-    if not by_possession:
-        for team in ["home", "away"]:
-            streams[(team, "all")] = input_data[input_data["home_away"] == team].copy()
-        return streams
-
-    required = {"ball_state", "ball_owning_team_id"}
-    if not required.issubset(input_data.columns):
-        raise ValueError(
-            f"by_possession=True requires columns {required}. "
-            f"Re-run MatchData.to_soccercpd_input(carry_possession=True)."
-        )
-
-    fps = _infer_fps(input_data)
-    alive_data = input_data[input_data["ball_state"] == "alive"].copy()
-    if min_poss_sec:
-        alive_data = smooth_possession(alive_data, min_poss_sec=min_poss_sec, fps=fps)
-
-    for team in ["home", "away"]:
-        team_data = alive_data[alive_data["home_away"] == team]
-        attack_data = team_data[team_data["ball_owning_team_id"] == team]
-        defend_data = team_data[team_data["ball_owning_team_id"] != team]
-        phase_data = {"attack": attack_data, "defend": defend_data}
-
-        for phase, stream in phase_data.items():
-            n_frames = stream["datetime"].nunique()
-            if n_frames < min_frames:
-                print(f"[prepare_cpd_streams] skip ({team}, {phase}): {n_frames} frames < {min_frames}")
-                continue
-            if retimeline:
-                stream, _ = retimeline_stream(stream.copy(), fps=fps)
-            streams[(team, phase)] = stream
-
-    return streams
-
-
 # Apply Delaunay triangulation to the given player coordinates to obtain the role-adjacency matrix
 def delaunay_adj_mat(coords):
     tri_pts = Delaunay(coords).simplices
@@ -442,8 +297,8 @@ def detect_change_times(
     mode="form",
     method="gseg_avg",
     max_pval=MAX_PVAL,
-    min_pdur=MIN_PERIOD_DUR,
-    min_fdist=MIN_FORM_DIST,
+    min_seg_dur=MIN_SEG_DUR,
+    min_form_dist=MIN_FORM_DIST,
 ) -> List[datetime]:
     # if mode == "form" (FormCPD), the input is a sequence of role-adjacency matrices
     # if mode == "role" (RoleCPD), the input a sequence of role permutations
@@ -471,8 +326,7 @@ def detect_change_times(
 
             # run the R function "gseg1_discrete" to find a change-point
             # rpackages.importr("gSeg", lib_loc=rpackages.importr("base")._libPaths()[0])
-            robjects.r(
-                f"""
+            robjects.r(f"""
                 dir = '{DIR_TEMP_DATA}'
                 seq_path = paste(dir, 'temp_seq.csv', sep='/')
                 seq = read.csv(seq_path)
@@ -485,8 +339,7 @@ def detect_change_times(
                 output = gseg1_discrete(n, edge_mat, ids, statistics='generalized', n0=0.1*n, n1=0.9*n)
                 chg_idx = output$scanZ$generalized$tauhat_{gseg_type}
                 pval = output$pval.appr$generalized_{gseg_type}
-                """
-            )
+                """)
 
         except rembedded.RRuntimeError:
             return []
@@ -524,7 +377,7 @@ def detect_change_times(
     # condition (2): Both of the segments must last for at least five minutes
     seq1 = input_seq[:chg_dt]
     seq2 = input_seq[chg_dt:]
-    if (len(seq1) < min_pdur) or (len(seq2) < min_pdur):
+    if (len(seq1) < min_seg_dur) or (len(seq2) < min_seg_dur):
         print("Change-point insignificant: One of the periods has not enough duration.\n")
         return []
 
@@ -533,7 +386,7 @@ def detect_change_times(
         # from the segments before and after chg_dt are far enough from each other
         form1_adj_mat = seq1.mean(axis=0).values
         form2_adj_mat = seq2.mean(axis=0).values
-        if manhattan_dist(form1_adj_mat, form2_adj_mat) < min_fdist:
+        if manhattan_dist(form1_adj_mat, form2_adj_mat) < min_form_dist:
             print("Change-point insignificant: The formation is not changed.\n")
             return []
         else:
