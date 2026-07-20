@@ -55,8 +55,12 @@ class MatchData(ABC):
         gk_object_ids = set()
         if exclude_gks:
             lineup = getattr(self, "lineup", None)
-            if lineup is not None and "playing_position" in lineup.columns:
-                gk_object_ids = set(lineup.loc[lineup["playing_position"] == "GK", "object_id"])
+            if lineup is not None:
+                # GK is flagged by `playing_position == "GK"` (Sportec) or `is_keeper` (Tracab).
+                if "playing_position" in lineup.columns:
+                    gk_object_ids |= set(lineup.loc[lineup["playing_position"] == "GK", "object_id"])
+                if "is_keeper" in lineup.columns:
+                    gk_object_ids |= set(lineup.loc[lineup["is_keeper"].fillna(False), "object_id"])
 
         time_cols = ["datetime", "period_id", "timestamp", "frame_id"]
         if carry_possession:
@@ -70,6 +74,7 @@ class MatchData(ABC):
             team = p.split("_")[0]
             col_dict = {c: c.split("_")[-1] for c in tracking.columns if c.rsplit("_", 1)[0] == p}
             player_data = tracking[list(col_dict.keys())].copy().rename(columns=col_dict)
+            player_data = player_data.rename(columns={"speed": "s"})  # processed uses _speed; kloppy raw uses _s
 
             if team == "away":  # mirror so the away team also attacks +x
                 player_data["x"] = -player_data["x"]
